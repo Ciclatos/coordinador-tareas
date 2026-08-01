@@ -67,7 +67,7 @@ describe("constructor PDF", () => {
     const source = await PDFDocument.create();
     source.addPage([612, 792]);
     source.addPage([612, 792]);
-    const file = new File([await source.save()], "entrega.pdf", {
+    const file = new File([await source.save() as BlobPart], "entrega.pdf", {
       type: "application/pdf",
     });
     const bytes = await createAssignmentPdf(data([file]));

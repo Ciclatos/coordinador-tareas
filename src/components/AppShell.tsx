@@ -169,6 +169,7 @@ export default function AppShell({
       return;
     }
     notify("Generando documento…");
+    try {
     const persistedExercises: Exercise[] = currentAssignment.sections.flatMap(
       (section) =>
         section.exercises.map((exercise) => ({
@@ -226,6 +227,13 @@ export default function AppShell({
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     notify("PDF final generado correctamente");
+    } catch (error) {
+      notify(
+        error instanceof Error
+          ? `No se pudo generar el PDF: ${error.message}`
+          : "No se pudo generar el PDF.",
+      );
+    }
   };
   return (
     <div className="app">

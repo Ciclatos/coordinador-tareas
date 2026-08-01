@@ -21,6 +21,19 @@ export async function getDashboardData(userId: string) {
       groupNumber: true,
       academicYear: true,
       active: true,
+      templates: {
+        where: { active: true },
+        orderBy: { id: "asc" },
+        take: 1,
+        select: {
+          id: true,
+          name: true,
+          criteria: {
+            orderBy: { sortOrder: "asc" },
+            select: { id: true, name: true, maxScore: true, sortOrder: true },
+          },
+        },
+      },
       members: {
         orderBy: [{ active: "desc" }, { sortOrder: "asc" }],
         select: {
@@ -29,6 +42,7 @@ export async function getDashboardData(userId: string) {
           shortName: true,
           carnet: true,
           email: true,
+          phone: true,
           workloadBalance: true,
           active: true,
         },
@@ -45,6 +59,7 @@ export async function getDashboardData(userId: string) {
           weekStart: true,
           weekEnd: true,
           instructions: true,
+          coordinatorNotes: true,
           dueAt: true,
           status: true,
           pdfOrder: true,
@@ -118,6 +133,12 @@ export async function getDashboardData(userId: string) {
             take: 1,
             select: { id: true, body: true, generatorVersion: true, createdAt: true },
           },
+          pdfBuilds: {
+            where: { status: "READY", storageKey: { not: null } },
+            orderBy: { version: "desc" },
+            take: 10,
+            select: { id: true, version: true, sizeBytes: true, createdAt: true },
+          },
           _count: { select: { sections: true, submissions: true } },
         },
       },
@@ -133,6 +154,10 @@ export async function getDashboardData(userId: string) {
       reports: assignment.reports.map((report) => ({
         ...report,
         createdAt: report.createdAt.toISOString(),
+      })),
+      pdfBuilds: assignment.pdfBuilds.map((build) => ({
+        ...build,
+        createdAt: build.createdAt.toISOString(),
       })),
       submissions: assignment.submissions.map((submission) => ({
         ...submission,

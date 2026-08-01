@@ -9,6 +9,7 @@ export type StoredPdfSource = {
   rotation?: 0 | 90 | 180 | 270;
   selectedPages?: number[];
   pageCount?: number | null;
+  cropPercent?: number;
 };
 
 export type AssignmentPdfData = {
@@ -132,6 +133,7 @@ async function normalizeImage(
   bytes: Uint8Array,
   mimeType: string,
   profileName: keyof typeof imageProfiles,
+  cropPercent = 0,
 ) {
   const bitmap = await createImageBitmap(
     new Blob([bytes as BlobPart], { type: mimeType }),
@@ -139,12 +141,17 @@ async function normalizeImage(
   );
   const canvas = document.createElement("canvas");
   const profile = imageProfiles[profileName];
-  const scale = Math.min(1, profile.maxDimension / Math.max(bitmap.width, bitmap.height));
-  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const crop = Math.min(40, Math.max(0, cropPercent)) / 100;
+  const sourceX = bitmap.width * crop;
+  const sourceY = bitmap.height * crop;
+  const sourceWidth = bitmap.width * (1 - crop * 2);
+  const sourceHeight = bitmap.height * (1 - crop * 2);
+  const scale = Math.min(1, profile.maxDimension / Math.max(sourceWidth, sourceHeight));
+  canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+  canvas.height = Math.max(1, Math.round(sourceHeight * scale));
   const context = canvas.getContext("2d");
   if (!context) throw new Error("No se pudo convertir la imagen WEBP.");
-  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  context.drawImage(bitmap, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
   bitmap.close();
   const blob = await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob(
@@ -353,9 +360,10 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
       }
       continue;
     }
-    const needsNormalization = file.mimeType === "image/webp" || file.mimeType === "image/jpeg";
+    const cropPercent = source instanceof File ? 0 : source.cropPercent ?? 0;
+    const needsNormalization = file.mimeType === "image/webp" || file.mimeType === "image/jpeg" || cropPercent > 0;
     const imageBytes = needsNormalization
-      ? await normalizeImage(file.bytes, file.mimeType, data.imageQuality ?? "balanced")
+      ? await normalizeImage(file.bytes, file.mimeType, data.imageQuality ?? "balanced", cropPercent)
       : file.bytes;
     const image = needsNormalization
       ? await doc.embedJpg(imageBytes)

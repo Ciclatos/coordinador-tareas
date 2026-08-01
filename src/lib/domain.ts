@@ -4,6 +4,7 @@ export type Member = {
   shortName: string;
   carnet: string;
   email?: string | null;
+  phone?: string | null;
   historicalLoad: number;
   active: boolean;
 };

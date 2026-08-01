@@ -13,6 +13,13 @@ const courseSchema = z.object({
   name: z.string().trim().min(2, "Escribe el nombre del curso").max(120),
   code: z.string().trim().max(30).optional(),
   teacher: z.string().trim().max(120).optional(),
+  degree: z.string().trim().max(160).optional(),
+  faculty: z.string().trim().max(160).optional(),
+  university: z.string().trim().max(160).optional(),
+  campus: z.string().trim().max(120).optional(),
+  shift: z.string().trim().max(80).optional(),
+  cycle: z.string().trim().max(30).optional(),
+  semester: z.string().trim().max(30).optional(),
   section: z.string().trim().max(30).optional(),
   groupNumber: z.string().trim().max(30).optional(),
   academicYear: z.coerce.number().int().min(2020).max(2100),
@@ -23,6 +30,7 @@ const memberSchema = z.object({
   shortName: z.string().trim().min(2).max(50),
   carnet: z.string().trim().min(3).max(40),
   email: z.union([z.literal(""), z.email()]).optional(),
+  phone: z.string().trim().max(30).optional(),
 });
 const assignmentSchema = z.object({
   courseId: z.string().cuid(),
@@ -30,6 +38,8 @@ const assignmentSchema = z.object({
   weekNumber: z.coerce.number().int().positive(),
   title: z.string().trim().min(3).max(160),
   topic: z.string().trim().max(200).optional(),
+  instructions: z.string().trim().max(5000).optional(),
+  coordinatorNotes: z.string().trim().max(5000).optional(),
   weekStart: z.coerce.date(),
   weekEnd: z.coerce.date(),
   dueAt: z.coerce.date(),
@@ -65,19 +75,13 @@ const evaluationSchema = z.object({
       z
         .object({
           memberId: z.string().cuid(),
-          scores: z.array(z.number().min(0).max(100)).length(5),
-          reasons: z.array(z.string().trim().max(300)).length(5).optional(),
+          scores: z.array(z.number().min(0).max(100)).min(1).max(10),
+          reasons: z.array(z.string().trim().max(300)).min(1).max(10).optional(),
           comments: z.string().trim().max(1000).optional(),
         })
         .superRefine((item, context) => {
-          item.scores.forEach((score, index) => {
-            if (score < 20 && !item.reasons?.[index]?.trim())
-              context.addIssue({
-                code: "custom",
-                path: ["reasons", index],
-                message: "Indica el motivo de cada reducción.",
-              });
-          });
+          if (item.reasons && item.reasons.length !== item.scores.length)
+            context.addIssue({ code: "custom", path: ["reasons"], message: "Los motivos no coinciden con los criterios." });
         }),
     )
     .min(1)
@@ -90,6 +94,14 @@ const defaultCriteria = [
   "Comunicación",
   "Ejercicios completos",
 ];
+const evaluationTemplateSchema = z.object({
+  courseId: z.string().cuid(),
+  name: z.string().trim().min(2).max(100),
+  criteria: z.array(z.object({
+    name: z.string().trim().min(2).max(100),
+    maxScore: z.number().positive().max(100),
+  })).min(1).max(10),
+});
 const reportSchema = z.object({
   assignmentId: z.string().cuid(),
   body: z.string().trim().min(50).max(10000).optional(),
@@ -112,6 +124,7 @@ const pdfConfigurationSchema = z.object({
       fileId: z.string().cuid(),
       rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]),
       selectedPages: z.array(z.number().int().min(0).max(999)).min(1).max(1000).optional(),
+      cropPercent: z.number().min(0).max(40).optional(),
     }),
   ).max(200),
 });
@@ -139,6 +152,13 @@ export async function createCourse(
       teacher: parsed.data.teacher || null,
       section: parsed.data.section || null,
       groupNumber: parsed.data.groupNumber || null,
+      degree: parsed.data.degree || null,
+      faculty: parsed.data.faculty || null,
+      university: parsed.data.university || null,
+      campus: parsed.data.campus || null,
+      shift: parsed.data.shift || null,
+      cycle: parsed.data.cycle || null,
+      semester: parsed.data.semester || null,
     },
   });
   revalidatePath("/app");
@@ -161,6 +181,7 @@ export async function createMember(
       data: {
         ...parsed.data,
         email: parsed.data.email || null,
+        phone: parsed.data.phone || null,
         sortOrder: count,
       },
     });
@@ -183,7 +204,7 @@ export async function createAssignment(
     return { message: "La fecha final debe ser posterior a la inicial." };
   try {
     await prisma.assignment.create({
-      data: { ...parsed.data, topic: parsed.data.topic || null },
+      data: { ...parsed.data, topic: parsed.data.topic || null, instructions: parsed.data.instructions || null, coordinatorNotes: parsed.data.coordinatorNotes || null },
     });
   } catch {
     return { message: "Ya existe una tarea con ese número en el curso." };
@@ -212,6 +233,13 @@ export async function updateCourse(
       teacher: parsed.data.teacher || null,
       section: parsed.data.section || null,
       groupNumber: parsed.data.groupNumber || null,
+      degree: parsed.data.degree || null,
+      faculty: parsed.data.faculty || null,
+      university: parsed.data.university || null,
+      campus: parsed.data.campus || null,
+      shift: parsed.data.shift || null,
+      cycle: parsed.data.cycle || null,
+      semester: parsed.data.semester || null,
     },
   });
   if (!result.count) return { message: "No tienes acceso a este curso." };
@@ -241,6 +269,7 @@ export async function updateMember(
         shortName: parsed.data.shortName,
         carnet: parsed.data.carnet,
         email: parsed.data.email || null,
+        phone: parsed.data.phone || null,
       },
     });
     if (!result.count) return { message: "No tienes acceso a este integrante." };
@@ -270,7 +299,7 @@ export async function updateAssignment(
   try {
     const result = await prisma.assignment.updateMany({
       where: { id: id.data, courseId: parsed.data.courseId, course: { userId } },
-      data: { ...parsed.data, topic: parsed.data.topic || null },
+      data: { ...parsed.data, topic: parsed.data.topic || null, instructions: parsed.data.instructions || null, coordinatorNotes: parsed.data.coordinatorNotes || null },
     });
     if (!result.count) return { message: "No tienes acceso a esta tarea." };
   } catch {
@@ -291,6 +320,19 @@ export async function setCourseActive(courseId: string, active: boolean) {
   if (!result.count) return { ok: false, message: "No tienes acceso a este curso." };
   revalidatePath("/app");
   return { ok: true, message: active ? "Curso reactivado." : "Curso archivado." };
+}
+
+export async function resetCourseWorkloadBalance(courseId: string) {
+  const { userId } = await requireSession();
+  const id = z.string().cuid().safeParse(courseId);
+  if (!id.success || !(await ownsCourse(userId, id.data)))
+    return { ok: false, message: "No tienes acceso a este curso." };
+  await prisma.courseMember.updateMany({
+    where: { courseId: id.data },
+    data: { workloadBalance: 0 },
+  });
+  revalidatePath("/app");
+  return { ok: true, message: "Saldo del semestre reiniciado; el historial se conservó." };
 }
 
 export async function setMemberActive(memberId: string, active: boolean) {
@@ -477,7 +519,8 @@ export async function saveDistribution(
       ok: false,
       message: "Existen ejercicios duplicados o sin asignar.",
     };
-  await prisma.$transaction(async (tx) => {
+  try {
+    await prisma.$transaction(async (tx) => {
     await tx.exerciseAssignment.deleteMany({
       where: { assignmentId: assignment.id },
     });
@@ -567,7 +610,13 @@ export async function saveDistribution(
       where: { id: assignment.id },
       data: { status: "DISTRIBUTED" },
     });
-  });
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "No se pudo guardar la distribución.",
+    };
+  }
   revalidatePath("/app");
   return { ok: true, message: "Distribución guardada y reproducible." };
 }
@@ -629,6 +678,7 @@ export async function savePdfConfiguration(
             fileId: file.fileId,
             sortOrder,
             selectedPages: file.selectedPages ?? null,
+            cropPercent: file.cropPercent ?? 0,
           })),
         },
       },
@@ -658,7 +708,8 @@ export async function saveEvaluations(
   )
     return { ok: false, message: "Hay integrantes inválidos o repetidos." };
 
-  await prisma.$transaction(async (tx) => {
+  try {
+    await prisma.$transaction(async (tx) => {
     let template = await tx.evaluationTemplate.findFirst({
       where: { courseId: assignment.courseId, active: true },
       orderBy: { id: "asc" },
@@ -680,11 +731,13 @@ export async function saveEvaluations(
         select: { id: true, criteria: { orderBy: { sortOrder: "asc" } } },
       });
     }
-    if (template.criteria.length !== 5)
-      throw new Error("La plantilla activa debe contener cinco criterios.");
+    if (parsed.data.evaluations.some((item) => item.scores.length !== template!.criteria.length))
+      throw new Error("Las notas no coinciden con la plantilla activa.");
     for (const item of parsed.data.evaluations) {
       if (item.scores.some((score, index) => score > template!.criteria[index].maxScore))
         throw new Error("Una nota supera el máximo del criterio.");
+      if (item.scores.some((score, index) => score < template!.criteria[index].maxScore && !item.reasons?.[index]?.trim()))
+        throw new Error("Indica el motivo de cada reducción.");
       const total = item.scores.reduce((sum, score) => sum + score, 0);
       const evaluation = await tx.memberEvaluation.upsert({
         where: {
@@ -723,9 +776,42 @@ export async function saveEvaluations(
       where: { id: assignment.id },
       data: { status: "REVIEW" },
     });
-  });
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "No se pudieron guardar las evaluaciones.",
+    };
+  }
   revalidatePath("/app");
   return { ok: true, message: "Evaluaciones guardadas correctamente." };
+}
+
+export async function saveEvaluationTemplate(
+  input: z.infer<typeof evaluationTemplateSchema>,
+): Promise<{ ok: boolean; message: string }> {
+  const { userId } = await requireSession();
+  const parsed = evaluationTemplateSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: "Revisa los nombres y máximos de la rúbrica." };
+  if (!(await ownsCourse(userId, parsed.data.courseId)))
+    return { ok: false, message: "No tienes acceso a este curso." };
+  await prisma.$transaction(async (tx) => {
+    await tx.evaluationTemplate.updateMany({
+      where: { courseId: parsed.data.courseId, active: true },
+      data: { active: false },
+    });
+    await tx.evaluationTemplate.create({
+      data: {
+        courseId: parsed.data.courseId,
+        name: parsed.data.name,
+        criteria: {
+          create: parsed.data.criteria.map((criterion, sortOrder) => ({ ...criterion, sortOrder })),
+        },
+      },
+    });
+  });
+  revalidatePath("/app");
+  return { ok: true, message: "Plantilla de evaluación guardada." };
 }
 
 export async function saveWeeklyReport(

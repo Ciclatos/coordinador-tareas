@@ -42,8 +42,10 @@ import {
   importMembersCsv,
   moveMember,
   saveDistribution,
+  saveEvaluationTemplate,
   saveEvaluations,
   savePdfConfiguration,
+  resetCourseWorkloadBalance,
   saveWeeklyReport,
   setAssignmentArchived,
   setCourseActive,
@@ -73,7 +75,7 @@ type ModalState = {
   mode: "course" | "member" | "assignment";
   initial?: EditableEntity;
 };
-type PdfPreference = { fileId: string; sortOrder: number; selectedPages?: number[] };
+type PdfPreference = { fileId: string; sortOrder: number; selectedPages?: number[]; cropPercent?: number };
 function pdfPreferences(value: unknown): PdfPreference[] {
   const items = Array.isArray(value)
     ? value
@@ -87,10 +89,18 @@ function pdfPreferences(value: unknown): PdfPreference[] {
     const selectedPages = Array.isArray(candidate.selectedPages)
       ? candidate.selectedPages.filter((page): page is number => Number.isInteger(page) && page >= 0)
       : undefined;
-    return [{ fileId: candidate.fileId, sortOrder: candidate.sortOrder, selectedPages }];
+    const cropPercent = typeof candidate.cropPercent === "number" ? candidate.cropPercent : undefined;
+    return [{ fileId: candidate.fileId, sortOrder: candidate.sortOrder, selectedPages, cropPercent }];
   });
 }
 type ImageQuality = "high" | "balanced" | "compact";
+const DEFAULT_EVALUATION_CRITERIA = [
+  { name: "Puntualidad", maxScore: 20 },
+  { name: "Presentación PDF", maxScore: 20 },
+  { name: "Trabajo en equipo", maxScore: 20 },
+  { name: "Comunicación", maxScore: 20 },
+  { name: "Ejercicios completos", maxScore: 20 },
+];
 function pdfImageQuality(value: unknown): ImageQuality {
   if (value && typeof value === "object") {
     const quality = (value as Record<string, unknown>).imageQuality;
@@ -146,6 +156,7 @@ export default function AppShell({
         shortName: member.shortName,
         carnet: member.carnet,
         email: member.email,
+        phone: member.phone,
         historicalLoad: member.workloadBalance,
         active: member.active,
       })) ?? [],
@@ -238,6 +249,9 @@ export default function AppShell({
           selectedPages: pdfPreferences(currentAssignment.pdfOrder).find(
             (preference) => preference.fileId === file.id,
           )?.selectedPages,
+          cropPercent: pdfPreferences(currentAssignment.pdfOrder).find(
+            (preference) => preference.fileId === file.id,
+          )?.cropPercent,
           pageCount: file.pageCount,
         })),
       ),
@@ -252,8 +266,8 @@ export default function AppShell({
       })
       .map((file) => file.id),
   );
-  const [pdfOptions, setPdfOptions] = useState<Record<string, Pick<StoredPdfSource, "rotation" | "selectedPages">>>(
-    () => Object.fromEntries(storedPdfFiles.map((file) => [file.id, { rotation: file.rotation, selectedPages: file.selectedPages }])),
+  const [pdfOptions, setPdfOptions] = useState<Record<string, Pick<StoredPdfSource, "rotation" | "selectedPages" | "cropPercent">>>(
+    () => Object.fromEntries(storedPdfFiles.map((file) => [file.id, { rotation: file.rotation, selectedPages: file.selectedPages, cropPercent: file.cropPercent }])),
   );
   const [imageQuality, setImageQuality] = useState<ImageQuality>(() =>
     pdfImageQuality(currentAssignment?.pdfOrder),
@@ -354,6 +368,38 @@ export default function AppShell({
       imageQuality,
     });
     const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
+    const uploadId = crypto.randomUUID();
+    const pathname = `pdf-builds/${currentAssignment.id}/${uploadId}.pdf`;
+    const stored = await upload(pathname, blob, {
+      access: "private",
+      handleUploadUrl: "/api/pdf-builds/upload",
+      clientPayload: JSON.stringify({ assignmentId: currentAssignment.id, uploadId }),
+      contentType: "application/pdf",
+      multipart: blob.size > 5 * 1024 * 1024,
+    });
+    const completed = await fetch("/api/pdf-builds/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        assignmentId: currentAssignment.id,
+        uploadId,
+        pathname: stored.pathname,
+        items: [
+          "REPORT_COVER", "GROUP_PERFORMANCE", "DETAILED_EVALUATION",
+          "GRADE_SUMMARY", "OFFICIAL_COVER", "MEMBERS",
+        ].map((kind) => ({ kind })).concat(
+          orderedStoredPdfFiles.map((file) => ({
+            kind: "SUBMISSION_FILE",
+            sourceId: file.id,
+            rotation: file.rotation ?? 0,
+            selectedPages: file.selectedPages,
+            cropPercent: file.cropPercent,
+          })),
+        ),
+      }),
+    });
+    const completion = await completed.json();
+    if (!completed.ok) throw new Error(completion.error ?? "No se pudo guardar la versión final.");
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -362,7 +408,8 @@ export default function AppShell({
       .replace(/[^a-z0-9]+/g, "-")}.pdf`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    notify("PDF final generado correctamente");
+    router.refresh();
+    notify(`PDF final generado y guardado como versión ${completion.build.version}`);
     } catch (error) {
       notify(
         error instanceof Error
@@ -587,6 +634,7 @@ export default function AppShell({
               assignmentId={currentAssignmentId}
               reportBody={reportBody}
               setReportBody={setReportBody}
+              builds={currentAssignment?.pdfBuilds ?? []}
             />
           )}{" "}
           {view === "Configuración" && <SettingsView user={currentUser} />}
@@ -905,6 +953,13 @@ function Members({
           <button className="outline" onClick={() => setToolsOpen((open) => !open)} disabled={!hasCourses}>
             {toolsOpen ? "Cerrar herramientas" : "Importar o copiar"}
           </button>
+          <button
+            className="outline"
+            disabled={!courseId || busy}
+            onClick={() => courseId && window.confirm("¿Reiniciar el saldo acumulado de este curso? El historial semanal no se borrará.") && onAction(() => resetCourseWorkloadBalance(courseId))}
+          >
+            Reiniciar saldo semestral
+          </button>
           <button className="primary" onClick={onCreate} disabled={!hasCourses}>
             <Plus size={17} /> Agregar integrante
           </button>
@@ -1038,6 +1093,7 @@ function Members({
                             shortName: m.shortName,
                             carnet: m.carnet,
                             email: m.email,
+                            phone: m.phone,
                           })
                         }
                       >
@@ -1846,24 +1902,23 @@ function Submissions({ courses }: { courses: DashboardData }) {
   );
 }
 function Evaluation({ courses }: { courses: DashboardData }) {
-  const criteria = [
-    "Puntualidad",
-    "Presentación PDF",
-    "Trabajo en equipo",
-    "Comunicación",
-    "Ejercicios completos",
-  ];
   const assignments = useMemo(
     () =>
       courses.flatMap((course) =>
         course.assignments.map((assignment) => ({
           ...assignment,
+          courseId: course.id,
           courseName: course.name,
           members: course.members,
+          templateName: course.templates[0]?.name ?? "Evaluación semanal",
+          templateCriteria: course.templates[0]?.criteria ?? DEFAULT_EVALUATION_CRITERIA,
         })),
       ),
     [courses],
   );
+  const [assignmentId, setAssignmentId] = useState(assignments[0]?.id ?? "");
+  const assignment = assignments.find((item) => item.id === assignmentId);
+  const criteria = assignment?.templateCriteria ?? DEFAULT_EVALUATION_CRITERIA;
   const makeScores = (item: (typeof assignments)[number] | undefined) =>
     Object.fromEntries(
       (item?.members ?? []).map((member) => {
@@ -1872,7 +1927,10 @@ function Evaluation({ courses }: { courses: DashboardData }) {
         );
         return [
           member.id,
-          stored?.scores.map((score) => score.score) ?? [20, 20, 20, 20, 20],
+          (item?.templateCriteria ?? DEFAULT_EVALUATION_CRITERIA).map((criterion) => {
+            const previous = stored?.scores.find((score) => score.criterion.name === criterion.name);
+            return previous ? Math.min(previous.score, criterion.maxScore) : criterion.maxScore;
+          }),
         ];
       }),
     ) as Record<string, number[]>;
@@ -1884,7 +1942,9 @@ function Evaluation({ courses }: { courses: DashboardData }) {
         );
         return [
           member.id,
-          stored?.scores.map((score) => score.reason ?? "") ?? criteria.map(() => ""),
+          (item?.templateCriteria ?? DEFAULT_EVALUATION_CRITERIA).map(
+            (criterion) => stored?.scores.find((score) => score.criterion.name === criterion.name)?.reason ?? "",
+          ),
         ];
       }),
     ) as Record<string, string[]>;
@@ -1895,8 +1955,6 @@ function Evaluation({ courses }: { courses: DashboardData }) {
         item?.evaluations.find((evaluation) => evaluation.memberId === member.id)?.comments ?? "",
       ]),
     ) as Record<string, string>;
-  const [assignmentId, setAssignmentId] = useState(assignments[0]?.id ?? "");
-  const assignment = assignments.find((item) => item.id === assignmentId);
   const [scores, setScores] = useState<Record<string, number[]>>(() =>
     makeScores(assignments[0]),
   );
@@ -1908,15 +1966,21 @@ function Evaluation({ courses }: { courses: DashboardData }) {
   );
   const [message, setMessage] = useState("");
   const [saving, startSaving] = useTransition();
+  const router = useRouter();
+  const [editingTemplate, setEditingTemplate] = useState(false);
+  const [templateName, setTemplateName] = useState(assignment?.templateName ?? "Evaluación semanal");
+  const [templateCriteria, setTemplateCriteria] = useState(() =>
+    criteria.map(({ name, maxScore }) => ({ name, maxScore })),
+  );
   const setScore = (memberId: string, criterionIndex: number, value: number) =>
     {
       setScores((current) => ({
         ...current,
-        [memberId]: (current[memberId] ?? [20, 20, 20, 20, 20]).map(
+        [memberId]: (current[memberId] ?? criteria.map((criterion) => criterion.maxScore)).map(
           (score, index) => (index === criterionIndex ? value : score),
         ),
       }));
-      if (value === 20)
+      if (value === criteria[criterionIndex].maxScore)
         setReasons((current) => ({
           ...current,
           [memberId]: (current[memberId] ?? criteria.map(() => "")).map(
@@ -1924,28 +1988,24 @@ function Evaluation({ courses }: { courses: DashboardData }) {
           ),
         }));
     };
-  const applyAll = (value: number) =>
+  const applyAll = () =>
     {
       setScores(
         Object.fromEntries(
           (assignment?.members ?? []).map((member) => [
             member.id,
-            criteria.map(() => value),
+            criteria.map((criterion) => criterion.maxScore),
           ]),
         ),
       );
-      if (value === 20)
-        setReasons(
-          Object.fromEntries(
-            (assignment?.members ?? []).map((member) => [
-              member.id,
-              criteria.map(() => ""),
-            ]),
-          ),
-        );
+      setReasons(
+        Object.fromEntries(
+          (assignment?.members ?? []).map((member) => [member.id, criteria.map(() => "")]),
+        ),
+      );
     };
   const copyRowToAll = (memberId: string) => {
-    const sourceScores = scores[memberId] ?? criteria.map(() => 20);
+    const sourceScores = scores[memberId] ?? criteria.map((criterion) => criterion.maxScore);
     const sourceReasons = reasons[memberId] ?? criteria.map(() => "");
     setScores(
       Object.fromEntries((assignment?.members ?? []).map((member) => [member.id, [...sourceScores]])),
@@ -1968,7 +2028,7 @@ function Evaluation({ courses }: { courses: DashboardData }) {
           <button
             className="outline"
             disabled={!assignment}
-            onClick={() => applyAll(20)}
+            onClick={applyAll}
           >
             Aplicar 20 a todos
           </button>
@@ -2011,6 +2071,11 @@ function Evaluation({ courses }: { courses: DashboardData }) {
               setScores(makeScores(next));
               setReasons(makeReasons(next));
               setComments(makeComments(next));
+              setTemplateName(next?.templateName ?? "Evaluación semanal");
+              setTemplateCriteria(
+                (next?.templateCriteria ?? DEFAULT_EVALUATION_CRITERIA).map(({ name, maxScore }) => ({ name, maxScore })),
+              );
+              setEditingTemplate(false);
               setMessage("");
             }}
           >
@@ -2022,15 +2087,44 @@ function Evaluation({ courses }: { courses: DashboardData }) {
           </select>
         </label>
       </div>
+      <div className="panel form">
+        <div className="section-heading">
+          <div>
+            <h3>Rúbrica del curso</h3>
+            <p>{assignment?.templateName ?? "Evaluación semanal"} · máximo {criteria.reduce((sum, item) => sum + item.maxScore, 0)} puntos</p>
+          </div>
+          <button className="outline" disabled={!assignment} onClick={() => setEditingTemplate((value) => !value)}>
+            {editingTemplate ? "Cancelar edición" : "Editar criterios"}
+          </button>
+        </div>
+        {editingTemplate && assignment && (
+          <>
+            <label>Nombre de la plantilla<input value={templateName} onChange={(event) => setTemplateName(event.target.value)} /></label>
+            {templateCriteria.map((criterion, index) => (
+              <div className="two" key={index}>
+                <label>Criterio {index + 1}<input value={criterion.name} onChange={(event) => setTemplateCriteria((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} /></label>
+                <label>Máximo<input type="number" min="1" max="100" value={criterion.maxScore} onChange={(event) => setTemplateCriteria((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, maxScore: Number(event.target.value) } : item))} /></label>
+                {templateCriteria.length > 1 && <button className="outline" onClick={() => setTemplateCriteria((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Quitar criterio</button>}
+              </div>
+            ))}
+            {templateCriteria.length < 10 && <button className="outline" onClick={() => setTemplateCriteria((current) => [...current, { name: "Nuevo criterio", maxScore: 20 }])}>Agregar criterio</button>}
+            <button className="primary" disabled={saving} onClick={() => startSaving(async () => {
+              const result = await saveEvaluationTemplate({ courseId: assignment.courseId, name: templateName, criteria: templateCriteria });
+              setMessage(result.message);
+              if (result.ok) { setEditingTemplate(false); router.refresh(); }
+            })}>Guardar plantilla</button>
+          </>
+        )}
+      </div>
       <div className="panel table-wrap">
         <table>
           <thead>
             <tr>
               <th>Integrante</th>
               {criteria.map((c) => (
-                <th key={c}>
-                  {c}
-                  <small>Máx. 20</small>
+                <th key={c.name}>
+                  {c.name}
+                  <small>Máx. {c.maxScore}</small>
                 </th>
               ))}
               <th>Total</th>
@@ -2046,39 +2140,39 @@ function Evaluation({ courses }: { courses: DashboardData }) {
                   <small>{m.carnet}</small>
                 </td>
                 {criteria.map((c, criterionIndex) => (
-                  <td key={c}>
+                  <td key={c.name}>
                     <input
                       className="score"
                       type="number"
                       min="0"
-                      max="20"
-                      value={scores[m.id]?.[criterionIndex] ?? 20}
-                      aria-label={`${c} de ${m.fullName}`}
+                      max={c.maxScore}
+                      value={scores[m.id]?.[criterionIndex] ?? c.maxScore}
+                      aria-label={`${c.name} de ${m.fullName}`}
                       onChange={(event) =>
                         setScore(
                           m.id,
                           criterionIndex,
                           Math.max(
                             0,
-                            Math.min(20, Number(event.target.value)),
+                            Math.min(c.maxScore, Number(event.target.value)),
                           ),
                         )
                       }
                     />
-                    <div className="score-quick" aria-label={`Notas rápidas de ${c} para ${m.fullName}`}>
-                      {[20, 18, 15, 10, 0].map((value) => (
+                    <div className="score-quick" aria-label={`Notas rápidas de ${c.name} para ${m.fullName}`}>
+                      {[c.maxScore, c.maxScore * 0.9, c.maxScore * 0.75, c.maxScore * 0.5, 0].map((value) => (
                         <button key={value} onClick={() => setScore(m.id, criterionIndex, value)}>
                           {value}
                         </button>
                       ))}
                     </div>
-                    {(scores[m.id]?.[criterionIndex] ?? 20) < 20 && (
+                    {(scores[m.id]?.[criterionIndex] ?? c.maxScore) < c.maxScore && (
                       <input
                         className="score-reason"
                         value={reasons[m.id]?.[criterionIndex] ?? ""}
                         maxLength={300}
                         placeholder="Motivo de reducción"
-                        aria-label={`Motivo de reducción de ${c} para ${m.fullName}`}
+                        aria-label={`Motivo de reducción de ${c.name} para ${m.fullName}`}
                         onChange={(event) =>
                           setReasons((current) => ({
                             ...current,
@@ -2094,7 +2188,7 @@ function Evaluation({ courses }: { courses: DashboardData }) {
                 ))}
                 <td>
                   <strong>
-                    {(scores[m.id] ?? [20, 20, 20, 20, 20]).reduce(
+                    {(scores[m.id] ?? criteria.map((criterion) => criterion.maxScore)).reduce(
                       (total, score) => total + score,
                       0,
                     )}
@@ -2122,7 +2216,9 @@ function Evaluation({ courses }: { courses: DashboardData }) {
         </table>
       </div>
       <p className="notice">
-        <CheckCircle2 /> La suma máxima de los criterios es 100 puntos.
+        <CheckCircle2 /> {criteria.reduce((sum, item) => sum + item.maxScore, 0) === 100
+          ? "La suma máxima de los criterios es 100 puntos."
+          : `Advertencia: la suma máxima es ${criteria.reduce((sum, item) => sum + item.maxScore, 0)}, no 100.`}
       </p>
       {message && <p className="notice">{message}</p>}
     </>
@@ -2140,6 +2236,7 @@ function PdfBuilder({
   onMoveFileTo,
   imageQuality,
   setImageQuality,
+  builds,
 }: {
   storedFiles: StoredPdfSource[];
   download: () => void;
@@ -2150,11 +2247,12 @@ function PdfBuilder({
   onMoveFile: (fileId: string, direction: -1 | 1) => void;
   onConfigureFile: (
     fileId: string,
-    options: Pick<StoredPdfSource, "rotation" | "selectedPages">,
+    options: Pick<StoredPdfSource, "rotation" | "selectedPages" | "cropPercent">,
   ) => void;
   onMoveFileTo: (fileId: string, targetId: string) => void;
   imageQuality: ImageQuality;
   setImageQuality: (quality: ImageQuality) => void;
+  builds: Array<{ id: string; version: number; sizeBytes: number | null; createdAt: string }>;
 }) {
   const [savingReport, startSavingReport] = useTransition();
   const [savingConfiguration, startSavingConfiguration] = useTransition();
@@ -2229,6 +2327,22 @@ function PdfBuilder({
         </div>
         {reportMessage && <p className="notice">{reportMessage}</p>}
       </div>
+      <div className="panel">
+        <h3>Versiones finales guardadas</h3>
+        {builds.length === 0 ? (
+          <p>Aún no hay versiones compiladas para esta tarea.</p>
+        ) : (
+          <div className="file-list">
+            {builds.map((build) => (
+              <div key={build.id}>
+                <FileText />
+                <span><b>Versión {build.version}</b><small>{new Date(build.createdAt).toLocaleString("es-GT", { timeZone: "America/Guatemala" })} · {build.sizeBytes ? `${(build.sizeBytes / 1024 / 1024).toFixed(2)} MB` : "Tamaño no disponible"}</small></span>
+                <a className="outline" href={`/api/pdf-builds/${build.id}`}>Descargar</a>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       <div className="builder">
         <div className="panel">
           <div className="panel-head">
@@ -2265,6 +2379,7 @@ function PdfBuilder({
                                 file.pageCount ?? undefined,
                               )
                             : undefined,
+                        cropPercent: file.mimeType.startsWith("image/") ? file.cropPercent ?? 0 : undefined,
                       }));
                       const result = await savePdfConfiguration({
                         assignmentId,
@@ -2378,6 +2493,19 @@ function PdfBuilder({
                         }}
                       />
                     </>
+                  )}
+                  {storedFiles[i - 6].mimeType.startsWith("image/") && (
+                    <label>
+                      Recorte por borde (%)
+                      <input
+                        type="number"
+                        min="0"
+                        max="40"
+                        value={storedFiles[i - 6].cropPercent ?? 0}
+                        aria-label={`Recorte de ${b}`}
+                        onChange={(event) => onConfigureFile(storedFiles[i - 6].id, { cropPercent: Math.min(40, Math.max(0, Number(event.target.value))) })}
+                      />
+                    </label>
                   )}
                   <div className="block-actions">
                     <button

@@ -16,9 +16,9 @@ Aplicación web en español para coordinar tareas grupales universitarias: defin
 - Distribución híbrida determinista: considera saldo histórico, rotación por sección, pesos, exclusiones y asignaciones bloqueadas.
 - Matriz editable para mover ejercicios entre integrantes.
 - Entregas PDF, JPG, PNG y WEBP en Vercel Blob privado, con validación binaria, SHA-256, versiones y acceso autenticado.
-- Evaluación rápida con cinco criterios de 20 puntos.
+- Evaluación rápida con rúbricas configurables por curso, máximos dinámicos, motivos de reducción, comentarios y plantillas versionadas.
 - Reporte determinista persistido, regenerable desde datos actuales y editable, sin depender de una API de IA.
-- PDF final mediante `pdf-lib`: portada, desempeño, evaluación detallada, resumen, carátula con logo, integrantes, entregas y numeración.
+- PDF final mediante `pdf-lib`: portada, desempeño, evaluación detallada, resumen, carátula con logo, integrantes, entregas y numeración. Incluye miniaturas PDF.js, selección de páginas, rotación, recorte de imágenes, drag and drop, compresión y versiones privadas descargables.
 - Autenticación por correo y contraseña, sesiones firmadas y persistencia multiusuario en Lakebase Postgres (Neon) mediante Prisma.
 
 ## Arquitectura
@@ -44,7 +44,7 @@ Abre `http://localhost:3000` y crea una cuenta. El seed opcional usa únicamente
 3. Crea un almacén privado con `npx vercel blob create-store coordinador-tareas-private --access private` y configura `BLOB_READ_WRITE_TOKEN`.
 4. Ejecuta `npm run db:migrate`. Opcionalmente define `SEED_DEMO_EMAIL` y `SEED_DEMO_PASSWORD` antes de `npm run db:seed`.
 
-El almacén debe permanecer privado. La aplicación entrega cada archivo mediante `/api/files/:id`, después de comprobar usuario y propiedad, con `Cache-Control: private, no-store`.
+El almacén debe permanecer privado. La aplicación entrega cada entrega mediante `/api/files/:id` y cada compilación mediante `/api/pdf-builds/:id`, después de comprobar usuario y propiedad, con `Cache-Control: private, no-store`.
 
 ## Referencia visual y PDF
 
@@ -72,7 +72,7 @@ npm run build
 npm run check
 ```
 
-Las pruebas actuales cubren reglas de ejercicios, reinicio por sección, números repetidos entre secciones, distribución determinista, historial, exclusiones, bloqueos, pesos, notas, reporte, autenticación, protección de rutas y firmas reales de archivos.
+Las pruebas unitarias cubren reglas de ejercicios, reinicio por sección, números repetidos entre secciones, distribución determinista, historial, exclusiones, bloqueos, pesos, notas, reporte, autenticación, protección de rutas, selección de páginas y firmas reales de archivos. `npm run test:e2e` ejecuta el flujo Playwright de registro, curso, integrante, tarea, distribución, evaluación y persistencia tras recargar.
 
 ## Despliegue
 
@@ -93,10 +93,9 @@ Configura en Vercel `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `AUTH_SECRET` y la 
 
 ## Limitaciones conocidas
 
-El PDF todavía se genera en el cliente con los archivos seleccionados durante la sesión; aún falta reconstruirlo desde entregas privadas persistidas. También faltan miniaturas PDF.js, selección y reordenamiento por página, recorte/rotación visual, edición completa de entidades, persistencia de evaluaciones y el flujo E2E integral automatizado.
+La compilación se realiza en el navegador para evitar los límites de memoria de funciones serverless y admite un máximo de 25 MB por PDF final. El recorte de imágenes es uniforme por borde; no incluye todavía un marco gráfico de recorte libre. Las cargas directas por estudiantes quedan fuera del MVP: por ahora las registra el coordinador.
 
 ## Próximas mejoras
 
-- Añadir miniaturas y reordenamiento drag-and-drop real por página.
 - Añadir enlaces individuales de entrega para estudiantes.
-- Incorporar pruebas E2E Playwright al CI.
+- Añadir recorte libre con marco visual y automatizar Playwright en CI.

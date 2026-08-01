@@ -1,17 +1,39 @@
 import { expect, test } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
+import { PDFDocument } from "pdf-lib";
+import { del } from "@vercel/blob";
 
 const prisma = new PrismaClient();
 const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const email = `e2e-${runId}@example.com`;
 
 test.afterAll(async () => {
-  await prisma.user.deleteMany({ where: { email } });
+  const stored = await prisma.course.findMany({
+    where: { user: { email } },
+    select: {
+      assignments: { select: {
+        pdfBuilds: { select: { storageKey: true } },
+        submissions: { select: { versions: { select: { files: { select: { storageKey: true } } } } } },
+      } },
+    },
+  });
+  const storageKeys = stored.flatMap((course) => course.assignments.flatMap((assignment) => [
+    ...assignment.pdfBuilds.flatMap((build) => build.storageKey ? [build.storageKey] : []),
+    ...assignment.submissions.flatMap((submission) => submission.versions.flatMap((version) => version.files.map((file) => file.storageKey))),
+  ]));
+  await Promise.allSettled(storageKeys.map((storageKey) => del(storageKey)));
+  await prisma.$transaction([
+    prisma.assignment.deleteMany({
+      where: { course: { user: { email } } },
+    }),
+    prisma.course.deleteMany({ where: { user: { email } } }),
+    prisma.user.deleteMany({ where: { email } }),
+  ]);
   await prisma.$disconnect();
 });
 
 test("protege la aplicación, registra una cuenta y persiste el CRUD base", async ({ page }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(180_000);
   await page.goto("/app");
   await expect(page).toHaveURL(/\/ingresar$/);
 
@@ -49,4 +71,64 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   await page.reload();
   await page.getByRole("button", { name: "Integrantes", exact: true }).click();
   await expect(page.getByText("Ana Integrante E2E")).toBeVisible();
+
+  await page.getByRole("button", { name: "Tareas", exact: true }).click();
+  await page.getByRole("button", { name: "Nueva tarea" }).click();
+  await page.getByLabel("Curso").selectOption({ label: `Curso E2E ${runId}` });
+  await page.getByLabel("Número de tarea").fill("1");
+  await page.getByLabel("Número de semana").fill("1");
+  await page.getByLabel("Título").fill("Distribución E2E");
+  await page.getByLabel("Tema").fill("Prueba automatizada");
+  await page.getByLabel("Inicio de semana").fill("2026-08-01");
+  await page.getByLabel("Final de semana").fill("2026-08-07");
+  await page.getByLabel("Fecha y hora límite").fill("2027-08-08T23:59");
+  await page.getByRole("button", { name: "Guardar" }).click();
+  await expect(page.getByText("Tarea creada.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Distribución E2E/ })).toBeVisible();
+
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Distribución", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Redistribuir" }).click();
+  await expect(page.getByText(/5 ejercicios distribuidos sin duplicados/)).toBeVisible();
+  await page.getByRole("button", { name: "Guardar distribución" }).click();
+  await expect(page.getByText("Distribución guardada y reproducible.")).toBeVisible();
+
+  await page.getByRole("navigation").getByRole("button", { name: "Entregas", exact: true }).click();
+  const fixture = await PDFDocument.create();
+  fixture.addPage([612, 792]);
+  const fixtureBytes = await fixture.save();
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "entrega-e2e.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from(fixtureBytes),
+  });
+  await page.getByRole("button", { name: "Guardar entrega privada" }).click();
+  await expect(page.getByText(/Entrega guardada como versión 1/)).toBeVisible({ timeout: 60_000 });
+
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Evaluación", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Aplicar 20 a todos" }).click();
+  await page.getByRole("button", { name: "Guardar evaluaciones" }).click();
+  await expect(page.getByText("Evaluaciones guardadas correctamente.")).toBeVisible();
+  await expect(page.getByRole("cell", { name: "100" })).toBeVisible();
+
+  await page.reload();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Evaluación", exact: true })
+    .click();
+  await expect(page.getByRole("cell", { name: "100" })).toBeVisible();
+
+  await page.getByRole("navigation").getByRole("button", { name: "PDF final", exact: true }).click();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Generar y descargar" }).click();
+  await download;
+  await expect(page.getByText(/PDF final generado y guardado como versión 1/)).toBeVisible({ timeout: 60_000 });
+  await page.reload();
+  await page.getByRole("navigation").getByRole("button", { name: "PDF final", exact: true }).click();
+  await expect(page.getByText("Versión 1", { exact: true })).toBeVisible();
 });

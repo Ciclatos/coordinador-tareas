@@ -23,6 +23,13 @@ export type EditableEntity = {
   name?: string;
   code?: string | null;
   teacher?: string | null;
+  degree?: string | null;
+  faculty?: string | null;
+  university?: string | null;
+  campus?: string | null;
+  shift?: string | null;
+  cycle?: string | null;
+  semester?: string | null;
   section?: string | null;
   groupNumber?: string | null;
   academicYear?: number | null;
@@ -30,10 +37,13 @@ export type EditableEntity = {
   shortName?: string;
   carnet?: string;
   email?: string | null;
+  phone?: string | null;
   number?: number;
   weekNumber?: number;
   title?: string;
   topic?: string | null;
+  instructions?: string | null;
+  coordinatorNotes?: string | null;
   weekStart?: string;
   weekEnd?: string;
   dueAt?: string;
@@ -135,6 +145,17 @@ export function EntityModal({
                   />
                 </label>
               </div>
+              <label>Carrera<input name="degree" defaultValue={initial?.degree ?? ""} /></label>
+              <label>Universidad<input name="university" defaultValue={initial?.university ?? ""} /></label>
+              <label>Facultad<input name="faculty" defaultValue={initial?.faculty ?? ""} /></label>
+              <div className="two">
+                <label>Sede<input name="campus" defaultValue={initial?.campus ?? ""} /></label>
+                <label>Jornada<input name="shift" defaultValue={initial?.shift ?? ""} /></label>
+              </div>
+              <div className="two">
+                <label>Ciclo<input name="cycle" defaultValue={initial?.cycle ?? ""} /></label>
+                <label>Semestre<input name="semester" defaultValue={initial?.semester ?? ""} /></label>
+              </div>
               <label>
                 Docente
                 <input name="teacher" defaultValue={initial?.teacher ?? ""} />
@@ -171,6 +192,7 @@ export function EntityModal({
                 Correo opcional
                 <input name="email" type="email" defaultValue={initial?.email ?? ""} />
               </label>
+              <label>Teléfono opcional<input name="phone" type="tel" defaultValue={initial?.phone ?? ""} /></label>
             </>
           )}
           {mode === "assignment" && (
@@ -193,6 +215,8 @@ export function EntityModal({
                 Tema
                 <input name="topic" defaultValue={initial?.topic ?? ""} />
               </label>
+              <label>Instrucciones<textarea name="instructions" rows={4} defaultValue={initial?.instructions ?? ""} /></label>
+              <label>Observaciones del coordinador<textarea name="coordinatorNotes" rows={3} defaultValue={initial?.coordinatorNotes ?? ""} /></label>
               <div className="two">
                 <label>
                   Inicio de semana

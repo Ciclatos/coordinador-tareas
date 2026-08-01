@@ -5,6 +5,9 @@ import {
   createAssignment,
   createCourse,
   createMember,
+  updateAssignment,
+  updateCourse,
+  updateMember,
 } from "@/app/app/actions";
 import type { DashboardData } from "@/data/dashboard";
 
@@ -14,17 +17,45 @@ const labels = {
   member: "Agregar integrante",
   assignment: "Nueva tarea",
 };
+export type EditableEntity = {
+  id: string;
+  courseId?: string;
+  name?: string;
+  code?: string | null;
+  teacher?: string | null;
+  section?: string | null;
+  groupNumber?: string | null;
+  academicYear?: number | null;
+  fullName?: string;
+  shortName?: string;
+  carnet?: string;
+  email?: string | null;
+  number?: number;
+  weekNumber?: number;
+  title?: string;
+  topic?: string | null;
+  weekStart?: string;
+  weekEnd?: string;
+  dueAt?: string;
+};
 export function EntityModal({
   mode,
   courses,
   onClose,
+  initial,
 }: {
   mode: Mode;
   courses: DashboardData;
   onClose: () => void;
+  initial?: EditableEntity;
 }) {
-  const action =
-    mode === "course"
+  const action = initial
+    ? mode === "course"
+      ? updateCourse
+      : mode === "member"
+        ? updateMember
+        : updateAssignment
+    : mode === "course"
       ? createCourse
       : mode === "member"
         ? createMember
@@ -48,17 +79,28 @@ export function EntityModal({
         <header>
           <div>
             <small>DATOS REQUERIDOS</small>
-            <h2 id="modal-title">{labels[mode]}</h2>
+            <h2 id="modal-title">
+              {initial ? labels[mode].replace("Nuevo", "Editar").replace("Nueva", "Editar").replace("Agregar", "Editar") : labels[mode]}
+            </h2>
           </div>
           <button onClick={onClose} aria-label="Cerrar">
             <X />
           </button>
         </header>
         <form action={formAction}>
+          {initial && <input type="hidden" name="id" value={initial.id} />}
           {mode !== "course" && (
             <label>
               Curso
-              <select name="courseId" required defaultValue="">
+              {initial?.courseId && (
+                <input type="hidden" name="courseId" value={initial.courseId} />
+              )}
+              <select
+                name={initial ? undefined : "courseId"}
+                required
+                disabled={Boolean(initial)}
+                defaultValue={initial?.courseId ?? ""}
+              >
                 <option value="" disabled>
                   Selecciona un curso
                 </option>
@@ -76,35 +118,35 @@ export function EntityModal({
             <>
               <label>
                 Nombre del curso
-                <input name="name" required />
+                <input name="name" required defaultValue={initial?.name ?? ""} />
               </label>
               <div className="two">
                 <label>
                   Código
-                  <input name="code" />
+                  <input name="code" defaultValue={initial?.code ?? ""} />
                 </label>
                 <label>
                   Año académico
                   <input
                     name="academicYear"
                     type="number"
-                    defaultValue={new Date().getFullYear()}
+                    defaultValue={initial?.academicYear ?? new Date().getFullYear()}
                     required
                   />
                 </label>
               </div>
               <label>
                 Docente
-                <input name="teacher" />
+                <input name="teacher" defaultValue={initial?.teacher ?? ""} />
               </label>
               <div className="two">
                 <label>
                   Sección
-                  <input name="section" />
+                  <input name="section" defaultValue={initial?.section ?? ""} />
                 </label>
                 <label>
                   Número de grupo
-                  <input name="groupNumber" />
+                  <input name="groupNumber" defaultValue={initial?.groupNumber ?? ""} />
                 </label>
               </div>
             </>
@@ -113,21 +155,21 @@ export function EntityModal({
             <>
               <label>
                 Nombre completo
-                <input name="fullName" required />
+                <input name="fullName" required defaultValue={initial?.fullName ?? ""} />
               </label>
               <div className="two">
                 <label>
                   Nombre corto
-                  <input name="shortName" required />
+                  <input name="shortName" required defaultValue={initial?.shortName ?? ""} />
                 </label>
                 <label>
                   Carné
-                  <input name="carnet" required />
+                  <input name="carnet" required defaultValue={initial?.carnet ?? ""} />
                 </label>
               </div>
               <label>
                 Correo opcional
-                <input name="email" type="email" />
+                <input name="email" type="email" defaultValue={initial?.email ?? ""} />
               </label>
             </>
           )}
@@ -136,20 +178,20 @@ export function EntityModal({
               <div className="two">
                 <label>
                   Número de tarea
-                  <input name="number" type="number" min="1" required />
+                  <input name="number" type="number" min="1" required defaultValue={initial?.number} />
                 </label>
                 <label>
                   Número de semana
-                  <input name="weekNumber" type="number" min="1" required />
+                  <input name="weekNumber" type="number" min="1" required defaultValue={initial?.weekNumber} />
                 </label>
               </div>
               <label>
                 Título
-                <input name="title" required />
+                <input name="title" required defaultValue={initial?.title ?? ""} />
               </label>
               <label>
                 Tema
-                <input name="topic" />
+                <input name="topic" defaultValue={initial?.topic ?? ""} />
               </label>
               <div className="two">
                 <label>
@@ -157,7 +199,7 @@ export function EntityModal({
                   <input
                     name="weekStart"
                     type="date"
-                    defaultValue={today}
+                    defaultValue={initial?.weekStart?.slice(0, 10) ?? today}
                     required
                   />
                 </label>
@@ -166,14 +208,19 @@ export function EntityModal({
                   <input
                     name="weekEnd"
                     type="date"
-                    defaultValue={today}
+                    defaultValue={initial?.weekEnd?.slice(0, 10) ?? today}
                     required
                   />
                 </label>
               </div>
               <label>
                 Fecha y hora límite
-                <input name="dueAt" type="datetime-local" required />
+                <input
+                  name="dueAt"
+                  type="datetime-local"
+                  required
+                  defaultValue={initial?.dueAt?.slice(0, 16)}
+                />
               </label>
             </>
           )}

@@ -22,8 +22,7 @@ export async function getDashboardData(userId: string) {
       academicYear: true,
       active: true,
       members: {
-        where: { active: true },
-        orderBy: { sortOrder: "asc" },
+        orderBy: [{ active: "desc" }, { sortOrder: "asc" }],
         select: {
           id: true,
           fullName: true,

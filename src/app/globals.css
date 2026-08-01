@@ -530,6 +530,8 @@ p {
   padding-top: 14px;
   display: flex;
   justify-content: space-between;
+  gap: 12px;
+  align-items: center;
 }
 .course footer b {
   font-size: 12px;
@@ -539,6 +541,36 @@ p {
   background: none;
   color: var(--green);
   font-weight: 700;
+}
+.row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.row-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.row-actions.compact {
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+}
+.icon-action {
+  border: 1px solid #d7e1dd;
+  background: white;
+  color: #365148;
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.icon-action:disabled,
+.row-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .table-wrap {
   overflow: auto;
@@ -581,6 +613,9 @@ th small {
   border-bottom: 1px solid var(--line);
 }
 .task-row > button {
+  margin-left: auto;
+}
+.task-actions {
   margin-left: auto;
 }
 .task-num {

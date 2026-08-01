@@ -166,6 +166,166 @@ export async function createAssignment(
   return { ok: true, message: "Tarea creada." };
 }
 
+export async function updateCourse(
+  _: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const { userId } = await requireSession();
+  const id = z.string().cuid().safeParse(formData.get("id"));
+  const parsed = courseSchema.safeParse(Object.fromEntries(formData));
+  if (!id.success || !parsed.success)
+    return {
+      message: "Revisa los datos del curso.",
+      errors: parsed.success ? undefined : parsed.error.flatten().fieldErrors,
+    };
+  const result = await prisma.course.updateMany({
+    where: { id: id.data, userId },
+    data: {
+      ...parsed.data,
+      code: parsed.data.code || null,
+      teacher: parsed.data.teacher || null,
+      section: parsed.data.section || null,
+      groupNumber: parsed.data.groupNumber || null,
+    },
+  });
+  if (!result.count) return { message: "No tienes acceso a este curso." };
+  revalidatePath("/app");
+  return { ok: true, message: "Curso actualizado." };
+}
+
+export async function updateMember(
+  _: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const { userId } = await requireSession();
+  const id = z.string().cuid().safeParse(formData.get("id"));
+  const parsed = memberSchema.safeParse(Object.fromEntries(formData));
+  if (!id.success || !parsed.success)
+    return {
+      message: "Revisa los datos del integrante.",
+      errors: parsed.success ? undefined : parsed.error.flatten().fieldErrors,
+    };
+  if (!(await ownsCourse(userId, parsed.data.courseId)))
+    return { message: "No tienes acceso a este curso." };
+  try {
+    const result = await prisma.courseMember.updateMany({
+      where: { id: id.data, courseId: parsed.data.courseId, course: { userId } },
+      data: {
+        fullName: parsed.data.fullName,
+        shortName: parsed.data.shortName,
+        carnet: parsed.data.carnet,
+        email: parsed.data.email || null,
+      },
+    });
+    if (!result.count) return { message: "No tienes acceso a este integrante." };
+  } catch {
+    return { message: "El carné ya existe en este curso." };
+  }
+  revalidatePath("/app");
+  return { ok: true, message: "Integrante actualizado." };
+}
+
+export async function updateAssignment(
+  _: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const { userId } = await requireSession();
+  const id = z.string().cuid().safeParse(formData.get("id"));
+  const parsed = assignmentSchema.safeParse(Object.fromEntries(formData));
+  if (!id.success || !parsed.success)
+    return {
+      message: "Revisa los datos de la tarea.",
+      errors: parsed.success ? undefined : parsed.error.flatten().fieldErrors,
+    };
+  if (!(await ownsCourse(userId, parsed.data.courseId)))
+    return { message: "No tienes acceso a este curso." };
+  if (parsed.data.weekEnd < parsed.data.weekStart)
+    return { message: "La fecha final debe ser posterior a la inicial." };
+  try {
+    const result = await prisma.assignment.updateMany({
+      where: { id: id.data, courseId: parsed.data.courseId, course: { userId } },
+      data: { ...parsed.data, topic: parsed.data.topic || null },
+    });
+    if (!result.count) return { message: "No tienes acceso a esta tarea." };
+  } catch {
+    return { message: "Ya existe una tarea con ese número en el curso." };
+  }
+  revalidatePath("/app");
+  return { ok: true, message: "Tarea actualizada." };
+}
+
+export async function setCourseActive(courseId: string, active: boolean) {
+  const { userId } = await requireSession();
+  const id = z.string().cuid().safeParse(courseId);
+  if (!id.success) return { ok: false, message: "Curso inválido." };
+  const result = await prisma.course.updateMany({
+    where: { id: id.data, userId },
+    data: { active },
+  });
+  if (!result.count) return { ok: false, message: "No tienes acceso a este curso." };
+  revalidatePath("/app");
+  return { ok: true, message: active ? "Curso reactivado." : "Curso archivado." };
+}
+
+export async function setMemberActive(memberId: string, active: boolean) {
+  const { userId } = await requireSession();
+  const id = z.string().cuid().safeParse(memberId);
+  if (!id.success) return { ok: false, message: "Integrante inválido." };
+  const result = await prisma.courseMember.updateMany({
+    where: { id: id.data, course: { userId } },
+    data: { active },
+  });
+  if (!result.count)
+    return { ok: false, message: "No tienes acceso a este integrante." };
+  revalidatePath("/app");
+  return { ok: true, message: active ? "Integrante reactivado." : "Integrante desactivado." };
+}
+
+export async function setAssignmentArchived(assignmentId: string, archived: boolean) {
+  const { userId } = await requireSession();
+  const id = z.string().cuid().safeParse(assignmentId);
+  if (!id.success) return { ok: false, message: "Tarea inválida." };
+  const assignment = await prisma.assignment.findFirst({
+    where: { id: id.data, course: { userId } },
+    select: { id: true, status: true },
+  });
+  if (!assignment) return { ok: false, message: "No tienes acceso a esta tarea." };
+  await prisma.assignment.update({
+    where: { id: assignment.id },
+    data: { status: archived ? "ARCHIVED" : "DRAFT" },
+  });
+  revalidatePath("/app");
+  return { ok: true, message: archived ? "Tarea archivada." : "Tarea restaurada como borrador." };
+}
+
+export async function moveMember(memberId: string, direction: -1 | 1) {
+  const { userId } = await requireSession();
+  const id = z.string().cuid().safeParse(memberId);
+  if (!id.success || ![-1, 1].includes(direction))
+    return { ok: false, message: "Movimiento inválido." };
+  const member = await prisma.courseMember.findFirst({
+    where: { id: id.data, course: { userId } },
+    select: { id: true, courseId: true, sortOrder: true },
+  });
+  if (!member) return { ok: false, message: "No tienes acceso a este integrante." };
+  const neighbor = await prisma.courseMember.findFirst({
+    where: {
+      courseId: member.courseId,
+      active: true,
+      sortOrder: direction < 0 ? { lt: member.sortOrder } : { gt: member.sortOrder },
+    },
+    orderBy: { sortOrder: direction < 0 ? "desc" : "asc" },
+    select: { id: true, sortOrder: true },
+  });
+  if (!neighbor) return { ok: true, message: "El integrante ya está en ese extremo." };
+  await prisma.$transaction([
+    prisma.courseMember.update({ where: { id: member.id }, data: { sortOrder: neighbor.sortOrder } }),
+    prisma.courseMember.update({ where: { id: neighbor.id }, data: { sortOrder: member.sortOrder } }),
+  ]);
+  revalidatePath("/app");
+  return { ok: true, message: "Orden actualizado." };
+}
+
 export async function saveDistribution(
   input: z.infer<typeof distributionSchema>,
 ): Promise<{ ok: boolean; message: string }> {

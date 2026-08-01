@@ -87,4 +87,9 @@ describe("evaluación y reporte", () => {
     expect(r).toContain("2 entregas pendientes");
     expect(r).toContain("Ana");
   });
+  it("describe una tarea todavía sin secciones sin producir una frase vacía", () => {
+    const r = reportText([], 0, 0, []);
+    expect(r).toContain("planificación inicial de la tarea");
+    expect(r).not.toContain("secciones .");
+  });
 });

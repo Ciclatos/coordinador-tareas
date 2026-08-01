@@ -3,6 +3,7 @@ export type Member = {
   name: string;
   shortName: string;
   carnet: string;
+  email?: string | null;
   historicalLoad: number;
   active: boolean;
 };
@@ -154,5 +155,8 @@ export function reportText(
     style: "long",
     type: "conjunction",
   }).format(sectionNames);
-  return `Durante la presente semana se trabajaron los ejercicios asignados de ${sectionNames.length === 1 ? "la sección" : "las secciones"} ${sections}. La distribución híbrida equilibró la carga actual con el historial del grupo y conservó la identidad de cada sección.${extras.length ? ` La carga adicional correspondió a ${extras.join(", ")} por presentar el menor saldo acumulado.` : ""} ${pending ? `Quedaron ${pending} entrega${pending === 1 ? "" : "s"} pendiente${pending === 1 ? "" : "s"}.` : "Todos los integrantes entregaron su trabajo."}${late ? ` Se registraron ${late} entrega${late === 1 ? "" : "s"} tardía${late === 1 ? "" : "s"}.` : " No se registraron entregas tardías."}`;
+  const scope = sectionNames.length
+    ? `los ejercicios asignados de ${sectionNames.length === 1 ? "la sección" : "las secciones"} ${sections}`
+    : "la planificación inicial de la tarea";
+  return `Durante la presente semana se trabajó en ${scope}. La distribución híbrida equilibró la carga actual con el historial del grupo y conservó la identidad de cada sección.${extras.length ? ` La carga adicional correspondió a ${extras.join(", ")} por presentar el menor saldo acumulado.` : ""} ${pending ? `Quedaron ${pending} entrega${pending === 1 ? "" : "s"} pendiente${pending === 1 ? "" : "s"}.` : "Todos los integrantes entregaron su trabajo."}${late ? ` Se registraron ${late} entrega${late === 1 ? "" : "s"} tardía${late === 1 ? "" : "s"}.` : " No se registraron entregas tardías."}`;
 }

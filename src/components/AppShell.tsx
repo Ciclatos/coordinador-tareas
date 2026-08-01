@@ -4,6 +4,9 @@ import { upload } from "@vercel/blob/client";
 import { useRouter } from "next/navigation";
 import {
   BookOpen,
+  Archive,
+  ArrowDown,
+  ArrowUp,
   CheckCircle2,
   ClipboardCheck,
   FileDown,
@@ -12,6 +15,7 @@ import {
   LogOut,
   Menu,
   Plus,
+  Pencil,
   Send,
   Settings,
   Upload,
@@ -30,11 +34,15 @@ import {
 import { createAssignmentPdf, type StoredPdfSource } from "@/lib/pdf";
 import { logout } from "@/app/(auth)/actions";
 import type { DashboardData } from "@/data/dashboard";
-import { EntityModal } from "@/components/EntityModal";
+import { EntityModal, type EditableEntity } from "@/components/EntityModal";
 import {
+  moveMember,
   saveDistribution,
   saveEvaluations,
   saveWeeklyReport,
+  setAssignmentArchived,
+  setCourseActive,
+  setMemberActive,
   updateProfile,
 } from "@/app/app/actions";
 import { submissionPath } from "@/lib/submission-path";
@@ -49,6 +57,10 @@ type View =
   | "Evaluación"
   | "PDF final"
   | "Configuración";
+type ModalState = {
+  mode: "course" | "member" | "assignment";
+  initial?: EditableEntity;
+};
 const nav: [View, typeof LayoutDashboard][] = [
   ["Resumen", LayoutDashboard],
   ["Cursos", BookOpen],
@@ -87,12 +99,15 @@ export default function AppShell({
         name: member.fullName,
         shortName: member.shortName,
         carnet: member.carnet,
+        email: member.email,
         historicalLoad: member.workloadBalance,
         active: member.active,
       })) ?? [],
     [initialData],
   );
   const [view, setView] = useState<View>("Resumen");
+  const router = useRouter();
+  const [mutating, startMutation] = useTransition();
   const [menu, setMenu] = useState(false);
   const [sectionDefs, setSectionDefs] = useState(() =>
     currentAssignment?.sections.length
@@ -102,6 +117,10 @@ export default function AppShell({
           labels: section.exercises.map((exercise) => exercise.label),
         }))
       : [{ id: "draft-section-1", name: "Sección 1", labels: [] as string[] }],
+  );
+  const activeMembers = useMemo(
+    () => members.filter((member) => member.active),
+    [members],
   );
   const [exercises, setExercises] = useState<Exercise[]>(() =>
     currentAssignment?.sections.length
@@ -129,9 +148,7 @@ export default function AppShell({
         )
       : [],
   );
-  const [modal, setModal] = useState<"course" | "member" | "assignment" | null>(
-    null,
-  );
+  const [modal, setModal] = useState<ModalState | null>(null);
   const [rule, setRule] = useState<
     "manual" | "range" | "odd" | "even" | "multiple"
   >("multiple");
@@ -191,7 +208,7 @@ export default function AppShell({
       const next = buildExercises(sectionDefs.map((section) => ({ ...section, labels })));
       setSectionDefs((current) => current.map((section) => ({ ...section, labels })));
       setExercises(next);
-      setAllocations(members.length ? distribute(next, members) : []);
+      setAllocations(activeMembers.length ? distribute(next, activeMembers) : []);
       notify(`${next.length} ejercicios distribuidos sin duplicados`);
     } catch (e) {
       notify(e instanceof Error ? e.message : "No se pudo distribuir");
@@ -350,27 +367,58 @@ export default function AppShell({
           {view === "Cursos" && (
             <Courses
               courses={initialData}
-              onCreate={() => setModal("course")}
+              onCreate={() => setModal({ mode: "course" })}
               onOpen={() => go("Integrantes")}
+              onEdit={(course) => setModal({ mode: "course", initial: course })}
+              onToggle={(course) =>
+                startMutation(async () => {
+                  const result = await setCourseActive(course.id, !course.active);
+                  setToast(result.message);
+                  if (result.ok) router.refresh();
+                })
+              }
+              busy={mutating}
             />
           )}{" "}
           {view === "Integrantes" && (
             <Members
               totals={totals}
-              onCreate={() => setModal("member")}
+              courseId={currentCourse?.id}
+              onCreate={() => setModal({ mode: "member" })}
               hasCourses={initialData.length > 0}
+              onEdit={(member) => setModal({ mode: "member", initial: member })}
+              onAction={(action) =>
+                startMutation(async () => {
+                  const result = await action();
+                  setToast(result.message);
+                  if (result.ok) router.refresh();
+                })
+              }
+              busy={mutating}
             />
           )}{" "}
           {view === "Tareas" && (
             <Tasks
               courses={initialData}
-              onCreate={() => setModal("assignment")}
+              onCreate={() => setModal({ mode: "assignment" })}
               onOpen={() => go("Distribución")}
+              onEdit={(assignment) => setModal({ mode: "assignment", initial: assignment })}
+              onArchive={(assignment) =>
+                startMutation(async () => {
+                  const result = await setAssignmentArchived(
+                    assignment.id,
+                    assignment.status !== "ARCHIVED",
+                  );
+                  setToast(result.message);
+                  if (result.ok) router.refresh();
+                })
+              }
+              busy={mutating}
             />
           )}{" "}
           {view === "Distribución" && (
             <Distribution
-              members={members}
+              members={activeMembers}
               exercises={exercises}
               setExercises={setExercises}
               allocations={allocations}
@@ -408,7 +456,7 @@ export default function AppShell({
                 })
               }
               download={download}
-              members={members}
+              members={activeMembers}
               assignmentId={currentAssignmentId}
               reportBody={reportBody}
               setReportBody={setReportBody}
@@ -425,9 +473,10 @@ export default function AppShell({
       )}
       {modal && (
         <EntityModal
-          mode={modal}
+          mode={modal.mode}
           courses={initialData}
           onClose={() => setModal(null)}
+          initial={modal.initial}
         />
       )}
     </div>
@@ -636,10 +685,16 @@ function Courses({
   courses,
   onCreate,
   onOpen,
+  onEdit,
+  onToggle,
+  busy,
 }: {
   courses: DashboardData;
   onCreate: () => void;
   onOpen: () => void;
+  onEdit: (course: DashboardData[number]) => void;
+  onToggle: (course: DashboardData[number]) => void;
+  busy: boolean;
 }) {
   return (
     <>
@@ -667,7 +722,15 @@ function Courses({
             </p>
             <footer>
               <b>{course.members.length} integrantes</b>
-              <button onClick={onOpen}>Ver integrantes →</button>
+              <div className="row-actions">
+                <button onClick={() => onEdit(course)} aria-label={`Editar ${course.name}`}>
+                  <Pencil size={14} /> Editar
+                </button>
+                <button disabled={busy} onClick={() => onToggle(course)}>
+                  <Archive size={14} /> {course.active ? "Archivar" : "Reactivar"}
+                </button>
+                <button onClick={onOpen}>Integrantes →</button>
+              </div>
             </footer>
           </article>
         ))}
@@ -689,10 +752,18 @@ function Members({
   totals,
   onCreate,
   hasCourses,
+  courseId,
+  onEdit,
+  onAction,
+  busy,
 }: {
   totals: { m: Member; count: number }[];
   onCreate: () => void;
   hasCourses: boolean;
+  courseId?: string;
+  onEdit: (member: EditableEntity) => void;
+  onAction: (action: () => Promise<{ ok: boolean; message: string }>) => void;
+  busy: boolean;
 }) {
   return (
     <>
@@ -721,6 +792,7 @@ function Members({
                 <th>Asignados esta semana</th>
                 <th>Saldo histórico</th>
                 <th>Estado</th>
+                <th>Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -736,7 +808,52 @@ function Members({
                     <span className="balance">{m.historicalLoad}</span>
                   </td>
                   <td>
-                    <span className="status">Activo</span>
+                    <span className={`status ${m.active ? "" : "gray"}`}>
+                      {m.active ? "Activo" : "Inactivo"}
+                    </span>
+                  </td>
+                  <td>
+                    <div className="row-actions compact">
+                      <button
+                        className="icon-action"
+                        aria-label={`Subir a ${m.name}`}
+                        disabled={busy || !m.active}
+                        onClick={() => onAction(() => moveMember(m.id, -1))}
+                      >
+                        <ArrowUp size={14} />
+                      </button>
+                      <button
+                        className="icon-action"
+                        aria-label={`Bajar a ${m.name}`}
+                        disabled={busy || !m.active}
+                        onClick={() => onAction(() => moveMember(m.id, 1))}
+                      >
+                        <ArrowDown size={14} />
+                      </button>
+                      <button
+                        className="icon-action"
+                        aria-label={`Editar ${m.name}`}
+                        onClick={() =>
+                          onEdit({
+                            id: m.id,
+                            courseId,
+                            fullName: m.name,
+                            shortName: m.shortName,
+                            carnet: m.carnet,
+                            email: m.email,
+                          })
+                        }
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        className="icon-action"
+                        disabled={busy}
+                        onClick={() => onAction(() => setMemberActive(m.id, !m.active))}
+                      >
+                        <Archive size={14} /> {m.active ? "Desactivar" : "Reactivar"}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -751,14 +868,21 @@ function Tasks({
   courses,
   onCreate,
   onOpen,
+  onEdit,
+  onArchive,
+  busy,
 }: {
   courses: DashboardData;
   onCreate: () => void;
   onOpen: () => void;
+  onEdit: (assignment: EditableEntity) => void;
+  onArchive: (assignment: DashboardData[number]["assignments"][number]) => void;
+  busy: boolean;
 }) {
   const assignments = courses.flatMap((course) =>
     course.assignments.map((assignment) => ({
       ...assignment,
+      courseId: course.id,
       courseName: course.name,
     })),
   );
@@ -794,7 +918,15 @@ function Tasks({
                 }).format(new Date(assignment.dueAt))}
               </p>
             </div>
-            <button className="outline" onClick={onOpen}>Abrir distribución</button>
+            <div className="row-actions task-actions">
+              <button className="outline" onClick={() => onEdit(assignment)}>
+                <Pencil size={14} /> Editar
+              </button>
+              <button className="outline" disabled={busy} onClick={() => onArchive(assignment)}>
+                <Archive size={14} /> {assignment.status === "ARCHIVED" ? "Restaurar" : "Archivar"}
+              </button>
+              <button className="outline" onClick={onOpen}>Distribución</button>
+            </div>
           </div>
         ))}
         {assignments.length === 0 && (

@@ -68,8 +68,12 @@ type ModalState = {
 };
 type PdfPreference = { fileId: string; sortOrder: number; selectedPages?: number[] };
 function pdfPreferences(value: unknown): PdfPreference[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => {
+  const items = Array.isArray(value)
+    ? value
+    : value && typeof value === "object" && Array.isArray((value as Record<string, unknown>).items)
+      ? ((value as Record<string, unknown>).items as unknown[])
+      : [];
+  return items.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
     const candidate = item as Record<string, unknown>;
     if (typeof candidate.fileId !== "string" || typeof candidate.sortOrder !== "number") return [];
@@ -78,6 +82,15 @@ function pdfPreferences(value: unknown): PdfPreference[] {
       : undefined;
     return [{ fileId: candidate.fileId, sortOrder: candidate.sortOrder, selectedPages }];
   });
+}
+type ImageQuality = "high" | "balanced" | "compact";
+function pdfImageQuality(value: unknown): ImageQuality {
+  if (value && typeof value === "object") {
+    const quality = (value as Record<string, unknown>).imageQuality;
+    if (quality === "high" || quality === "balanced" || quality === "compact")
+      return quality;
+  }
+  return "balanced";
 }
 const nav: [View, typeof LayoutDashboard][] = [
   ["Resumen", LayoutDashboard],
@@ -224,6 +237,9 @@ export default function AppShell({
   const [pdfOptions, setPdfOptions] = useState<Record<string, Pick<StoredPdfSource, "rotation" | "selectedPages">>>(
     () => Object.fromEntries(storedPdfFiles.map((file) => [file.id, { rotation: file.rotation, selectedPages: file.selectedPages }])),
   );
+  const [imageQuality, setImageQuality] = useState<ImageQuality>(() =>
+    pdfImageQuality(currentAssignment?.pdfOrder),
+  );
   const orderedStoredPdfFiles = storedPdfFiles.map((file) => ({ ...file, ...pdfOptions[file.id] })).sort((left, right) => {
     const leftIndex = pdfFileOrder.indexOf(left.id);
     const rightIndex = pdfFileOrder.indexOf(right.id);
@@ -313,6 +329,7 @@ export default function AppShell({
       reportBody,
       files: [],
       storedFiles: orderedStoredPdfFiles,
+      imageQuality,
     });
     const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
     const url = URL.createObjectURL(blob);
@@ -504,12 +521,32 @@ export default function AppShell({
                   return next;
                 })
               }
+              onMoveFileTo={(fileId, targetId) =>
+                setPdfFileOrder((current) => {
+                  if (fileId === targetId) return current;
+                  const complete = [
+                    ...current,
+                    ...storedPdfFiles
+                      .map((file) => file.id)
+                      .filter((id) => !current.includes(id)),
+                  ];
+                  const from = complete.indexOf(fileId);
+                  const to = complete.indexOf(targetId);
+                  if (from < 0 || to < 0) return complete;
+                  const next = [...complete];
+                  const [moved] = next.splice(from, 1);
+                  next.splice(to, 0, moved);
+                  return next;
+                })
+              }
               onConfigureFile={(fileId, options) =>
                 setPdfOptions((current) => ({
                   ...current,
                   [fileId]: { ...current[fileId], ...options },
                 }))
               }
+              imageQuality={imageQuality}
+              setImageQuality={setImageQuality}
               download={download}
               members={activeMembers}
               assignmentId={currentAssignmentId}
@@ -1716,6 +1753,9 @@ function PdfBuilder({
   setReportBody,
   onMoveFile,
   onConfigureFile,
+  onMoveFileTo,
+  imageQuality,
+  setImageQuality,
 }: {
   storedFiles: StoredPdfSource[];
   download: () => void;
@@ -1728,6 +1768,9 @@ function PdfBuilder({
     fileId: string,
     options: Pick<StoredPdfSource, "rotation" | "selectedPages">,
   ) => void;
+  onMoveFileTo: (fileId: string, targetId: string) => void;
+  imageQuality: ImageQuality;
+  setImageQuality: (quality: ImageQuality) => void;
 }) {
   const [savingReport, startSavingReport] = useTransition();
   const [savingConfiguration, startSavingConfiguration] = useTransition();
@@ -1807,39 +1850,79 @@ function PdfBuilder({
           <div className="panel-head">
             <div>
               <h3>Orden y páginas</h3>
-              <p>Ordena archivos, rota su contenido y elige páginas PDF con rangos como 1-3,5.</p>
+              <p>Arrastra entregas para ordenarlas, rota su contenido y elige páginas con rangos como 1-3,5.</p>
             </div>
-            <button
-              className="primary"
-              disabled={!assignmentId || savingConfiguration}
-              onClick={() =>
-                assignmentId &&
-                startSavingConfiguration(async () => {
-                  try {
-                    const files = storedFiles.map((file) => ({
-                      fileId: file.id,
-                      rotation: file.rotation ?? 0,
-                      selectedPages:
-                        file.mimeType === "application/pdf"
-                          ? parsePageSelection(pageInputs[file.id] ?? "", file.pageCount ?? undefined)
-                          : undefined,
-                    }));
-                    const result = await savePdfConfiguration({ assignmentId, files });
-                    setConfigurationMessage(result.message);
-                  } catch (error) {
-                    setConfigurationMessage(
-                      error instanceof Error ? error.message : "Configuración inválida.",
-                    );
-                  }
-                })
-              }
-            >
-              {savingConfiguration ? "Guardando…" : "Guardar configuración"}
-            </button>
+            <div className="quality-actions">
+              <label>
+                Calidad de imágenes
+                <select
+                  value={imageQuality}
+                  onChange={(event) => setImageQuality(event.target.value as ImageQuality)}
+                >
+                  <option value="high">Alta - 2400 px / 90%</option>
+                  <option value="balanced">Equilibrada - 1800 px / 78%</option>
+                  <option value="compact">Compacta - 1200 px / 62%</option>
+                </select>
+              </label>
+              <button
+                className="primary"
+                disabled={!assignmentId || savingConfiguration}
+                onClick={() =>
+                  assignmentId &&
+                  startSavingConfiguration(async () => {
+                    try {
+                      const files = storedFiles.map((file) => ({
+                        fileId: file.id,
+                        rotation: file.rotation ?? 0,
+                        selectedPages:
+                          file.mimeType === "application/pdf"
+                            ? parsePageSelection(
+                                pageInputs[file.id] ?? "",
+                                file.pageCount ?? undefined,
+                              )
+                            : undefined,
+                      }));
+                      const result = await savePdfConfiguration({
+                        assignmentId,
+                        imageQuality,
+                        files,
+                      });
+                      setConfigurationMessage(result.message);
+                    } catch (error) {
+                      setConfigurationMessage(
+                        error instanceof Error ? error.message : "Configuración inválida.",
+                      );
+                    }
+                  })
+                }
+              >
+                {savingConfiguration ? "Guardando…" : "Guardar configuración"}
+              </button>
+            </div>
           </div>
           {configurationMessage && <p className="notice">{configurationMessage}</p>}
           {blocks.map((b, i) => (
-            <div className="block" key={`${b}-${i}`}>
+            <div
+              className="block"
+              key={`${b}-${i}`}
+              draggable={i >= 6}
+              onDragStart={(event) => {
+                if (i >= 6) {
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", storedFiles[i - 6].id);
+                }
+              }}
+              onDragOver={(event) => {
+                if (i >= 6) event.preventDefault();
+              }}
+              onDrop={(event) => {
+                if (i >= 6) {
+                  event.preventDefault();
+                  const sourceId = event.dataTransfer.getData("text/plain");
+                  if (sourceId) onMoveFileTo(sourceId, storedFiles[i - 6].id);
+                }
+              }}
+            >
               <b>⋮⋮</b>
               <span>
                 <strong>{b}</strong>

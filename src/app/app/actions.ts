@@ -93,6 +93,7 @@ const profileSchema = z.object({
 });
 const pdfConfigurationSchema = z.object({
   assignmentId: z.string().cuid(),
+  imageQuality: z.enum(["high", "balanced", "compact"]).default("balanced"),
   files: z.array(
     z.object({
       fileId: z.string().cuid(),
@@ -609,11 +610,14 @@ export async function savePdfConfiguration(
     prisma.assignment.update({
       where: { id: assignment.id },
       data: {
-        pdfOrder: parsed.data.files.map((file, sortOrder) => ({
-          fileId: file.fileId,
-          sortOrder,
-          selectedPages: file.selectedPages ?? null,
-        })),
+        pdfOrder: {
+          imageQuality: parsed.data.imageQuality,
+          items: parsed.data.files.map((file, sortOrder) => ({
+            fileId: file.fileId,
+            sortOrder,
+            selectedPages: file.selectedPages ?? null,
+          })),
+        },
       },
     }),
   ]);

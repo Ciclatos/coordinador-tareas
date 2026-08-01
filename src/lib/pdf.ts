@@ -48,6 +48,7 @@ export type AssignmentPdfData = {
   reportBody: string;
   files: File[];
   storedFiles?: StoredPdfSource[];
+  imageQuality?: "high" | "balanced" | "compact";
 };
 
 const letter: [number, number] = [612, 792];
@@ -121,20 +122,37 @@ async function sourceBytes(source: File | StoredPdfSource) {
   return { bytes: new Uint8Array(await response.arrayBuffer()), mimeType: source.mimeType, name: source.name };
 }
 
-async function normalizeImage(bytes: Uint8Array, mimeType: string) {
+const imageProfiles = {
+  high: { maxDimension: 2400, quality: 0.9 },
+  balanced: { maxDimension: 1800, quality: 0.78 },
+  compact: { maxDimension: 1200, quality: 0.62 },
+} as const;
+
+async function normalizeImage(
+  bytes: Uint8Array,
+  mimeType: string,
+  profileName: keyof typeof imageProfiles,
+) {
   const bitmap = await createImageBitmap(
     new Blob([bytes as BlobPart], { type: mimeType }),
     { imageOrientation: "from-image" },
   );
   const canvas = document.createElement("canvas");
-  canvas.width = bitmap.width;
-  canvas.height = bitmap.height;
+  const profile = imageProfiles[profileName];
+  const scale = Math.min(1, profile.maxDimension / Math.max(bitmap.width, bitmap.height));
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
   const context = canvas.getContext("2d");
   if (!context) throw new Error("No se pudo convertir la imagen WEBP.");
-  context.drawImage(bitmap, 0, 0);
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
   const blob = await new Promise<Blob>((resolve, reject) =>
-    canvas.toBlob((value) => (value ? resolve(value) : reject(new Error("No se pudo convertir la imagen."))), "image/png"),
+    canvas.toBlob(
+      (value) =>
+        value ? resolve(value) : reject(new Error("No se pudo convertir la imagen.")),
+      "image/jpeg",
+      profile.quality,
+    ),
   );
   return new Uint8Array(await blob.arrayBuffer());
 }
@@ -337,9 +355,11 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
     }
     const needsNormalization = file.mimeType === "image/webp" || file.mimeType === "image/jpeg";
     const imageBytes = needsNormalization
-      ? await normalizeImage(file.bytes, file.mimeType)
+      ? await normalizeImage(file.bytes, file.mimeType, data.imageQuality ?? "balanced")
       : file.bytes;
-    const image = await doc.embedPng(imageBytes);
+    const image = needsNormalization
+      ? await doc.embedJpg(imageBytes)
+      : await doc.embedPng(imageBytes);
     page = doc.addPage(letter);
     pageNumber += 1;
     const scale = Math.min(540 / image.width, 700 / image.height);

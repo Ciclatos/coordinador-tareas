@@ -974,6 +974,33 @@ th small {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+.quality-actions {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.quality-actions label {
+  display: grid;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #556760;
+}
+.quality-actions select {
+  border: 1px solid #cfdbd7;
+  border-radius: 7px;
+  background: white;
+  padding: 8px;
+  color: #263b34;
+}
+.block[draggable="true"] {
+  cursor: grab;
+}
+.block[draggable="true"]:active {
+  cursor: grabbing;
+}
 .file-controls label {
   display: grid;
   gap: 3px;

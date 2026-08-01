@@ -3,5 +3,8 @@ tmp/
 output/
 .next/
 ._*
+.env
+.env.local
+.env.*
 AGENTS.md
 CLAUDE.md

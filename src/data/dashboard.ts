@@ -54,6 +54,7 @@ export async function getDashboardData(userId: string) {
             select: {
               id: true,
               name: true,
+              rule: true,
               exercises: {
                 orderBy: { sortOrder: "asc" },
                 select: {

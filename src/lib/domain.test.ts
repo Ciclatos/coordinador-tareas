@@ -3,6 +3,7 @@ import {
   buildExercises,
   demoMembers,
   distribute,
+  distributeByMode,
   generateLabels,
   grade,
   reportText,
@@ -76,6 +77,33 @@ describe("distribución híbrida", () => {
       weight: i === 0 ? 3 : 1,
     }));
     expect(distribute(weighted, demoMembers)).toHaveLength(weighted.length);
+  });
+  it("ofrece modos independiente, global e híbrido sin duplicar ejercicios", () => {
+    for (const mode of ["independent", "global", "hybrid"] as const) {
+      const result = distributeByMode(exercises, demoMembers, mode);
+      expect(result).toHaveLength(exercises.length);
+      expect(new Set(result.map((item) => item.exerciseId)).size).toBe(
+        exercises.length,
+      );
+    }
+  });
+  it("en modo manual conserva únicamente asignaciones válidas", () => {
+    expect(
+      distributeByMode(exercises, demoMembers, "manual", [
+        {
+          exerciseId: exercises[0].id,
+          memberId: demoMembers[0].id,
+          locked: true,
+        },
+        { exerciseId: "ajeno", memberId: demoMembers[0].id },
+      ]),
+    ).toEqual([
+      {
+        exerciseId: exercises[0].id,
+        memberId: demoMembers[0].id,
+        locked: true,
+      },
+    ]);
   });
 });
 describe("evaluación y reporte", () => {

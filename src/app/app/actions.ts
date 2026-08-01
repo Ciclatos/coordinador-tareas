@@ -37,6 +37,7 @@ const assignmentSchema = z.object({
 const distributionSchema = z.object({
   assignmentId: z.string().cuid(),
   seed: z.string().min(1).max(100),
+  mode: z.enum(["independent", "global", "hybrid", "manual"]).default("hybrid"),
   excludedMemberIds: z.array(z.string().cuid()).max(100).default([]),
   exercises: z
     .array(
@@ -483,7 +484,7 @@ export async function saveDistribution(
           assignmentId: assignment.id,
           name,
           sortOrder: sectionOrder++,
-          rule: { mode: "hybrid", seed: parsed.data.seed },
+          rule: { mode: parsed.data.mode, seed: parsed.data.seed },
         },
       });
       for (const [sortOrder, item] of items.entries()) {

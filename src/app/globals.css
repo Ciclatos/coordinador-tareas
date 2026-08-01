@@ -729,6 +729,30 @@ th small {
   font-weight: 700;
   cursor: pointer;
 }
+.distribution-mode {
+  padding: 15px 17px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: end;
+  gap: 18px;
+}
+.distribution-mode label {
+  display: grid;
+  gap: 6px;
+  min-width: 245px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.distribution-mode select {
+  border: 1px solid #ccd9d4;
+  border-radius: 7px;
+  padding: 9px 10px;
+  background: white;
+}
+.distribution-mode p {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
 .section-editor {
   padding: 20px;
   margin-bottom: 16px;
@@ -813,6 +837,28 @@ th small {
   border-radius: 5px;
   padding: 5px;
   max-width: 92px;
+}
+.exercise-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin: 2px;
+}
+.exercise-chip select {
+  margin: 0;
+}
+.exercise-chip button {
+  border: 1px solid #ccd8d4;
+  border-radius: 5px;
+  background: white;
+  color: #65736e;
+  padding: 4px 5px;
+  cursor: pointer;
+}
+.exercise-chip button.locked {
+  border-color: var(--green);
+  background: var(--mint);
+  color: var(--green);
 }
 .matrix {
   overflow-x: auto;

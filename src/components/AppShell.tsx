@@ -24,12 +24,13 @@ import {
 } from "lucide-react";
 import {
   buildExercises,
-  distribute,
+  distributeByMode,
   generateLabels,
   reportText,
   type Allocation,
   type Exercise,
   type Member,
+  type DistributionMode,
 } from "@/lib/domain";
 import { createAssignmentPdf, type StoredPdfSource } from "@/lib/pdf";
 import { logout } from "@/app/(auth)/actions";
@@ -91,6 +92,14 @@ function pdfImageQuality(value: unknown): ImageQuality {
       return quality;
   }
   return "balanced";
+}
+function distributionModeFromRule(value: unknown): DistributionMode {
+  if (value && typeof value === "object") {
+    const mode = (value as Record<string, unknown>).mode;
+    if (mode === "independent" || mode === "global" || mode === "hybrid" || mode === "manual")
+      return mode;
+  }
+  return "hybrid";
 }
 const nav: [View, typeof LayoutDashboard][] = [
   ["Resumen", LayoutDashboard],
@@ -186,6 +195,9 @@ export default function AppShell({
   const [rule, setRule] = useState<
     "manual" | "range" | "odd" | "even" | "multiple"
   >("multiple");
+  const [distributionMode, setDistributionMode] = useState<DistributionMode>(() =>
+    distributionModeFromRule(currentAssignment?.sections[0]?.rule),
+  );
   const [input, setInput] = useState("5 al 25");
   const [toast, setToast] = useState("");
   const defaultReport = currentAssignment
@@ -270,7 +282,11 @@ export default function AppShell({
       setSectionDefs((current) => current.map((section) => ({ ...section, labels })));
       setExercises(next);
       const eligible = activeMembers.filter((member) => !excludedMemberIds.includes(member.id));
-      setAllocations(eligible.length ? distribute(next, eligible) : []);
+      setAllocations(
+        eligible.length
+          ? distributeByMode(next, eligible, distributionMode, allocations)
+          : [],
+      );
       notify(`${next.length} ejercicios distribuidos sin duplicados`);
     } catch (e) {
       notify(e instanceof Error ? e.message : "No se pudo distribuir");
@@ -497,6 +513,8 @@ export default function AppShell({
               setSections={setSectionDefs}
               excludedMemberIds={excludedMemberIds}
               setExcludedMemberIds={setExcludedMemberIds}
+              distributionMode={distributionMode}
+              setDistributionMode={setDistributionMode}
             />
           )}{" "}
           {view === "Entregas" && <Submissions courses={initialData} />}{" "}
@@ -1120,6 +1138,8 @@ function Distribution({
   setSections,
   excludedMemberIds,
   setExcludedMemberIds,
+  distributionMode,
+  setDistributionMode,
 }: {
   members: Member[];
   exercises: Exercise[];
@@ -1138,12 +1158,24 @@ function Distribution({
   >;
   excludedMemberIds: string[];
   setExcludedMemberIds: React.Dispatch<React.SetStateAction<string[]>>;
+  distributionMode: DistributionMode;
+  setDistributionMode: (mode: DistributionMode) => void;
 }) {
   const [saving, startSaving] = useTransition();
   const [saveMessage, setSaveMessage] = useState("");
   const move = (eid: string, mid: string) =>
     setAllocations((a) =>
-      a.map((x) => (x.exerciseId === eid ? { ...x, memberId: mid } : x)),
+      a.map((x) =>
+        x.exerciseId === eid ? { ...x, memberId: mid, locked: true } : x,
+      ),
+    );
+  const toggleLock = (exerciseId: string) =>
+    setAllocations((current) =>
+      current.map((allocation) =>
+        allocation.exerciseId === exerciseId
+          ? { ...allocation, locked: !allocation.locked }
+          : allocation,
+      ),
     );
   const renameSection = (id: string, name: string) => {
     setSections((current) =>
@@ -1190,6 +1222,7 @@ function Distribution({
                 const result = await saveDistribution({
                   assignmentId,
                   seed: "5",
+                  mode: distributionMode,
                   excludedMemberIds,
                   exercises: exercises.map((item) => ({
                     localId: item.id,
@@ -1232,6 +1265,25 @@ function Distribution({
             </label>
           ))}
         </div>
+      </div>
+      <div className="panel distribution-mode">
+        <label>
+          Modo de distribución
+          <select
+            value={distributionMode}
+            onChange={(event) => setDistributionMode(event.target.value as DistributionMode)}
+          >
+            <option value="hybrid">Híbrido recomendado</option>
+            <option value="independent">Independiente por sección</option>
+            <option value="global">Global equilibrado</option>
+            <option value="manual">Manual</option>
+          </select>
+        </label>
+        <p>
+          {distributionMode === "manual"
+            ? "Conserva únicamente los movimientos actuales; completa cada ejercicio antes de guardar."
+            : "Redistribuye para aplicar el modo seleccionado con la misma semilla reproducible."}
+        </p>
       </div>
       <div className="panel section-editor">
         <div className="panel-head">
@@ -1332,21 +1384,40 @@ function Distribution({
                             ?.memberId === m.id,
                       )
                       .map((e) => (
-                        <select
-                          aria-label={`Asignación ${s} ${e.label}`}
-                          key={e.id}
-                          value={m.id}
-                          onChange={(x) => move(e.id, x.target.value)}
-                        >
-                          <option value={m.id}>{e.label}</option>
-                          {eligibleMembers
-                            .filter((o) => o.id !== m.id)
-                            .map((o) => (
-                              <option key={o.id} value={o.id}>
-                                {e.label} → {o.shortName}
-                              </option>
-                            ))}
-                        </select>
+                        <span className="exercise-chip" key={e.id}>
+                          <select
+                            aria-label={`Asignación ${s} ${e.label}`}
+                            value={m.id}
+                            onChange={(x) => move(e.id, x.target.value)}
+                          >
+                            <option value={m.id}>{e.label}</option>
+                            {eligibleMembers
+                              .filter((o) => o.id !== m.id)
+                              .map((o) => (
+                                <option key={o.id} value={o.id}>
+                                  {e.label} → {o.shortName}
+                                </option>
+                              ))}
+                          </select>
+                          <button
+                            className={
+                              allocations.find((item) => item.exerciseId === e.id)?.locked
+                                ? "locked"
+                                : ""
+                            }
+                            aria-label={`${
+                              allocations.find((item) => item.exerciseId === e.id)?.locked
+                                ? "Desbloquear"
+                                : "Bloquear"
+                            } ${s} ${e.label}`}
+                            title="Conservar esta asignación al redistribuir"
+                            onClick={() => toggleLock(e.id)}
+                          >
+                            {allocations.find((item) => item.exerciseId === e.id)?.locked
+                              ? "🔒"
+                              : "○"}
+                          </button>
+                        </span>
                       ))}
                   </td>
                 ))}

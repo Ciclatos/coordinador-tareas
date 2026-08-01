@@ -19,6 +19,7 @@ export type Allocation = {
   memberId: string;
   locked?: boolean;
 };
+export type DistributionMode = "independent" | "global" | "hybrid" | "manual";
 
 export const demoMembers: Member[] = [
   ["m1", "Ana Lucía Pérez", "Ana", "2026-01-1001", 5],
@@ -136,6 +137,39 @@ export function distribute(
       });
   });
   return result;
+}
+
+export function distributeByMode(
+  exercises: Exercise[],
+  members: Member[],
+  mode: DistributionMode,
+  fixed: Allocation[] = [],
+) {
+  if (mode === "manual")
+    return fixed.filter(
+      (allocation) =>
+        exercises.some((exercise) => exercise.id === allocation.exerciseId) &&
+        members.some((member) => member.id === allocation.memberId),
+    );
+  if (mode === "global")
+    return distribute(
+      exercises.map((exercise) => ({ ...exercise, sectionId: "global" })),
+      members,
+      fixed,
+    );
+  if (mode === "independent") {
+    const sections = [...new Set(exercises.map((exercise) => exercise.sectionId))];
+    return sections.flatMap((sectionId) => {
+      const sectionExercises = exercises.filter((exercise) => exercise.sectionId === sectionId);
+      const sectionIds = new Set(sectionExercises.map((exercise) => exercise.id));
+      return distribute(
+        sectionExercises,
+        members.map((member) => ({ ...member, historicalLoad: 0 })),
+        fixed.filter((allocation) => sectionIds.has(allocation.exerciseId)),
+      );
+    });
+  }
+  return distribute(exercises, members, fixed);
 }
 
 export function grade(scores: number[], maxima: number[]) {

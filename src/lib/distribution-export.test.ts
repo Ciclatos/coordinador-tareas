@@ -17,7 +17,9 @@ const allocations = distribute(exercises, members);
 describe("exportaciones de distribución", () => {
   it("genera vistas por sección, integrante y tabla TSV", () => {
     expect(distributionBySection(exercises, allocations, members)).toContain("5.3");
-    expect(distributionByMember(exercises, allocations, members)).toContain("peso");
+    expect(distributionByMember(exercises, allocations, members)).toMatch(/peso/i);
+    expect(distributionByMember(exercises, allocations, members)).toContain("Sección 5.3");
+    expect(distributionByMember(exercises, allocations, members)).toContain("Total:");
     expect(distributionSummaryTsv(exercises, allocations, members)).toMatch(/^Integrante\t/);
   });
   it("genera mensaje de WhatsApp con plazo, formatos e instrucciones", () => {

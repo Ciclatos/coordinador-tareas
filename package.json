@@ -15,7 +15,8 @@
     "db:migrate": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "pdf:inspect-reference": "node scripts/inspect-reference.mjs",
-    "pdf:qa": "tsx scripts/generate-pdf-qa.ts && node scripts/verify-pdf.mjs output/pdf/qa-30-pages.pdf 30"
+    "pdf:qa": "tsx scripts/generate-pdf-qa.ts && node scripts/verify-pdf.mjs output/pdf/qa-30-pages.pdf 30",
+    "image:qa": "tsx scripts/generate-distribution-image-qa.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

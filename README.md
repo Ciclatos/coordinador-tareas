@@ -12,9 +12,11 @@ Aplicación web en español para coordinar tareas grupales universitarias: defin
 - Dashboard responsive con progreso y estados de la tarea.
 - Cursos, integrantes, tareas semanales y configuración localizada para Guatemala.
 - Generador de rangos, pares, impares, múltiplos y listas alfanuméricas.
+- Configuración independiente por sección con rango, intervalo, lista manual, exclusiones, inclusiones, peso, notas, duplicación, orden y vista previa persistente.
 - Identidad de ejercicio compuesta por sección y etiqueta, de modo que `5.3:5` y `5.4:5` son diferentes.
 - Distribución híbrida determinista: considera saldo histórico, rotación por sección, pesos, exclusiones y asignaciones bloqueadas.
 - Matriz editable para mover ejercicios entre integrantes.
+- Exportación PNG tabular configurable en vistas matriz, integrante o sección, con orientación, resolución, fecha, instrucciones, totales, pesos, copia, descarga y Web Share.
 - Entregas PDF, JPG, PNG y WEBP en Vercel Blob privado, con validación binaria, SHA-256, versiones y acceso autenticado.
 - Evaluación rápida con rúbricas configurables por curso, máximos dinámicos, motivos de reducción, comentarios y plantillas versionadas.
 - Reporte determinista persistido, regenerable desde datos actuales y editable, sin depender de una API de IA.
@@ -60,7 +62,10 @@ La validación reproducible genera un documento carta de 31 páginas con seis in
 
 ```bash
 npm run pdf:qa
+npm run image:qa
 ```
+
+`image:qa` genera `output/qa/distribucion-secciones-diferentes.png` con datos ficticios y valida formato PNG y resolución mínima.
 
 ## Calidad
 

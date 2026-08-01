@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 import { PDFDocument } from "pdf-lib";
 import { del } from "@vercel/blob";
+import sharp from "sharp";
 
 const prisma = new PrismaClient();
 const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -90,10 +91,75 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
     .getByRole("navigation")
     .getByRole("button", { name: "Distribución", exact: true })
     .click();
+  let cards = page.locator(".section-card");
+  await cards.nth(0).getByLabel("Nombre o número de sección").fill("5.3");
+  await cards.nth(0).getByLabel("Hasta").fill("30");
+  await cards.nth(0).getByRole("button", { name: "Regenerar ejercicios" }).click();
+  await expect(cards.nth(0).getByText("6 ejercicio(s)")).toBeVisible();
+
+  await page.getByRole("button", { name: "Agregar sección" }).click();
+  cards = page.locator(".section-card");
+  await cards.nth(1).getByLabel("Nombre o número de sección").fill("5.4");
+  await cards.nth(1).getByLabel("Hasta").fill("50");
+  await cards.nth(1).getByRole("button", { name: "Regenerar ejercicios" }).click();
+  await expect(cards.nth(1).getByText("10 ejercicio(s)")).toBeVisible();
+
+  await page.getByRole("button", { name: "Agregar sección" }).click();
+  cards = page.locator(".section-card");
+  await cards.nth(2).getByLabel("Nombre o número de sección").fill("5.5");
+  await cards.nth(2).getByLabel("Tipo de selección").selectOption("manual");
+  await cards.nth(2).getByRole("textbox", { name: "Lista manual", exact: true }).fill("5, 10, 15, 20");
+  await cards.nth(2).getByRole("button", { name: "Regenerar ejercicios" }).click();
+  await expect(cards.nth(2).getByText("4 ejercicio(s)")).toBeVisible();
+  await expect(page.getByText("20 ejercicios en total")).toBeVisible();
+
   await page.getByRole("button", { name: "Redistribuir" }).click();
-  await expect(page.getByText(/5 ejercicios distribuidos sin duplicados/)).toBeVisible();
+  await expect(page.getByText(/20 ejercicios distribuidos sin duplicados/)).toBeVisible();
   await page.getByRole("button", { name: "Guardar distribución" }).click();
   await expect(page.getByText("Distribución guardada y reproducible.")).toBeVisible();
+
+  await page.reload();
+  await page.getByRole("navigation").getByRole("button", { name: "Distribución", exact: true }).click();
+  cards = page.locator(".section-card");
+  await expect(cards).toHaveCount(3);
+  await expect(cards.nth(0).getByText("6 ejercicio(s)")).toBeVisible();
+  await expect(cards.nth(1).getByText("10 ejercicio(s)")).toBeVisible();
+  await expect(cards.nth(2).getByText("4 ejercicio(s)")).toBeVisible();
+  await expect(page.getByText("20 ejercicios en total")).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "5.3" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "5.4" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "5.5" })).toBeVisible();
+  const whatsapp = page.locator(".whatsapp-panel textarea");
+  await expect(whatsapp).toHaveValue(/Sección 5.3:/);
+  await expect(whatsapp).toHaveValue(/Sección 5.4:/);
+  await expect(whatsapp).toHaveValue(/Sección 5.5:/);
+
+  await cards.nth(1).getByLabel("Hasta").fill("45");
+  await cards.nth(1).getByRole("button", { name: "Regenerar ejercicios" }).click();
+  await expect(cards.nth(1).getByText("9 ejercicio(s)")).toBeVisible();
+  await expect(cards.nth(0).getByText("6 ejercicio(s)")).toBeVisible();
+  await expect(cards.nth(2).getByText("4 ejercicio(s)")).toBeVisible();
+  await cards.nth(1).getByLabel("Hasta").fill("50");
+  await cards.nth(1).getByRole("button", { name: "Regenerar ejercicios" }).click();
+  await page.getByRole("button", { name: "Guardar distribución" }).click();
+  await expect(page.getByText("Distribución guardada y reproducible.")).toBeVisible();
+
+  await expect(page.getByAltText("Vista previa de la distribución tabular")).toBeVisible();
+  const pngDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Descargar PNG" }).click();
+  const png = await pngDownload;
+  expect(png.suggestedFilename()).toMatch(/tarea-1-distribucion\.png$/);
+  const stream = await png.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const pngBuffer = Buffer.concat(chunks);
+  expect(pngBuffer.subarray(1, 4).toString()).toBe("PNG");
+  const metadata = await sharp(pngBuffer).metadata();
+  expect(metadata.width).toBeGreaterThanOrEqual(900);
+  expect(metadata.height).toBeGreaterThanOrEqual(600);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByAltText("Vista previa de la distribución tabular")).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 900 });
 
   await page.getByRole("navigation").getByRole("button", { name: "Entregas", exact: true }).click();
   const fixture = await PDFDocument.create();

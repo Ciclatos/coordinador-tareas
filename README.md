@@ -15,15 +15,15 @@ Aplicación web en español para coordinar tareas grupales universitarias: defin
 - Identidad de ejercicio compuesta por sección y etiqueta, de modo que `5.3:5` y `5.4:5` son diferentes.
 - Distribución híbrida determinista: considera saldo histórico, rotación por sección, pesos, exclusiones y asignaciones bloqueadas.
 - Matriz editable para mover ejercicios entre integrantes.
-- Carga local de PDF, JPG y PNG; las imágenes conservan proporción al ajustarse a carta.
+- Entregas PDF, JPG, PNG y WEBP en Vercel Blob privado, con validación binaria, SHA-256, versiones y acceso autenticado.
 - Evaluación rápida con cinco criterios de 20 puntos.
 - Reporte determinista en español, sin depender de una API de IA.
 - PDF final mediante `pdf-lib`: portada, desempeño, carátula, integrantes, entregas y numeración de páginas.
-- Esquema PostgreSQL normalizado para persistencia multiusuario futura.
+- Autenticación por correo y contraseña, sesiones firmadas y persistencia multiusuario en Lakebase Postgres (Neon) mediante Prisma.
 
 ## Arquitectura
 
-La interfaz usa Next.js App Router y TypeScript estricto. `src/lib/domain.ts` contiene reglas puras y testeables; `src/lib/pdf.ts` compone el documento íntegramente en el navegador para evitar límites de memoria de funciones serverless; `src/components/AppShell.tsx` implementa el flujo demostrable. `prisma/schema.prisma` define el modelo relacional y aislamiento por propietario previsto para la conexión productiva.
+La interfaz usa Next.js App Router y TypeScript estricto. `src/lib/domain.ts` contiene reglas puras y testeables; `src/lib/pdf.ts` compone el documento en el navegador para evitar límites de memoria serverless; Prisma persiste los modelos en Lakebase Postgres. Las rutas de servidor comprueban la sesión y la propiedad del curso antes de operar. Las cargas van directamente del navegador a Blob mediante un token limitado y después se verifican y registran en una transacción.
 
 ## Desarrollo local
 
@@ -35,16 +35,16 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Abre `http://localhost:3000`. La demostración usa únicamente nombres ficticios y funciona sin credenciales externas.
+Abre `http://localhost:3000` y crea una cuenta. El seed opcional usa únicamente nombres ficticios.
 
 ## Base de datos y almacenamiento
 
-1. Crea PostgreSQL en Supabase o Neon.
-2. Copia `.env.example` a `.env.local` y completa `DATABASE_URL` y `DIRECT_URL`.
-3. Para almacenamiento privado, crea un bucket no público y configura las variables de Supabase.
-4. Aplica el esquema con Prisma después de instalar/generar el cliente del entorno elegido.
+1. Crea una base Lakebase Postgres/Neon y completa `DATABASE_URL` (pooled) y `DATABASE_URL_UNPOOLED` (directa).
+2. Genera `AUTH_SECRET` con al menos 32 caracteres.
+3. Crea un almacén privado con `npx vercel blob create-store coordinador-tareas-private --access private` y configura `BLOB_READ_WRITE_TOKEN`.
+4. Ejecuta `npm run db:migrate`. Opcionalmente define `SEED_DEMO_EMAIL` y `SEED_DEMO_PASSWORD` antes de `npm run db:seed`.
 
-Los archivos estudiantiles deben almacenarse con claves opacas y servirse mediante URLs firmadas. Nunca uses el bucket como público.
+El almacén debe permanecer privado. La aplicación entrega cada archivo mediante `/api/files/:id`, después de comprobar usuario y propiedad, con `Cache-Control: private, no-store`.
 
 ## Referencia visual y PDF
 
@@ -67,7 +67,7 @@ npm run build
 npm run check
 ```
 
-Las pruebas cubren reglas de ejercicios, reinicio por sección, números repetidos entre secciones, distribución determinista, historial, exclusiones, bloqueos, pesos, notas y reporte.
+Las pruebas actuales cubren reglas de ejercicios, reinicio por sección, números repetidos entre secciones, distribución determinista, historial, exclusiones, bloqueos, pesos, notas, reporte, autenticación, protección de rutas y firmas reales de archivos.
 
 ## Despliegue
 
@@ -77,22 +77,21 @@ Con una sesión de Vercel autenticada:
 npx vercel --prod
 ```
 
-Configura en Vercel las mismas variables de `.env.local`; nunca publiques la clave de servicio de Supabase en el navegador.
+Configura en Vercel `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `AUTH_SECRET` y la integración privada de Blob. El build ejecuta `prisma generate`; aplica las migraciones antes de publicar cambios de esquema.
 
 ## Privacidad
 
 - Los PDFs originales, carnés reales, `.env*`, `tmp/` y `output/` están ignorados.
 - Los datos demo son ficticios.
 - No se registran contenidos de entregas en logs.
-- Valida MIME real, tamaño, autorización y pertenencia al usuario antes de activar almacenamiento remoto.
+- La aplicación valida MIME real, tamaño, hash, autorización y pertenencia antes de registrar una entrega.
 
 ## Limitaciones conocidas
 
-Esta primera versión desplegable conserva el estado en la sesión del navegador y genera el PDF en el cliente. El esquema PostgreSQL está definido, pero la autenticación, persistencia remota, URLs firmadas, historial de versiones, miniaturas PDF.js, recorte/rotación visual y políticas RLS requieren conectar un proyecto Supabase/Neon con credenciales de producción. La UI señala estos flujos sin enviar datos personales a servicios externos.
+El PDF todavía se genera en el cliente con los archivos seleccionados durante la sesión; aún falta reconstruirlo desde entregas privadas persistidas. También faltan miniaturas PDF.js, selección y reordenamiento por página, recorte/rotación visual, edición completa de entidades, persistencia de evaluaciones y el flujo E2E integral automatizado.
 
 ## Próximas mejoras
 
-- Activar autenticación y persistencia del esquema Prisma.
 - Añadir miniaturas y reordenamiento drag-and-drop real por página.
-- Añadir enlaces individuales de entrega y almacenamiento privado.
+- Añadir enlaces individuales de entrega para estudiantes.
 - Incorporar pruebas E2E Playwright al CI.

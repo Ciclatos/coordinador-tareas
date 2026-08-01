@@ -192,6 +192,7 @@ model Submission {
   comments     String?
   versions     SubmissionVersion[]
 
+  @@unique([assignmentId, memberId])
   @@index([assignmentId, status])
 }
 
@@ -213,6 +214,7 @@ model SubmissionFile {
   exerciseId String?
   exercise   Exercise?         @relation(fields: [exerciseId], references: [id])
   storageKey String
+  originalName String
   mimeType   String
   kind       FileKind
   sizeBytes  Int

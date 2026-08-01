@@ -1,5 +1,7 @@
 "use client";
 import { useMemo, useState, useTransition } from "react";
+import { upload } from "@vercel/blob/client";
+import { useRouter } from "next/navigation";
 import {
   BookOpen,
   CheckCircle2,
@@ -29,6 +31,7 @@ import { logout } from "@/app/(auth)/actions";
 import type { DashboardData } from "@/data/dashboard";
 import { EntityModal } from "@/components/EntityModal";
 import { saveDistribution } from "@/app/app/actions";
+import { submissionPath } from "@/lib/submission-path";
 
 type View =
   | "Resumen"
@@ -249,7 +252,10 @@ export default function AppShell({
             />
           )}{" "}
           {view === "Entregas" && (
-            <Submissions files={files} setFiles={setFiles} />
+            <Submissions
+              setFiles={setFiles}
+              courses={initialData}
+            />
           )}{" "}
           {view === "Evaluación" && <Evaluation members={members} />}{" "}
           {view === "PDF final" && (
@@ -775,19 +781,153 @@ function generateSafe(
   }
 }
 function Submissions({
-  files,
   setFiles,
+  courses,
 }: {
-  files: File[];
   setFiles: React.Dispatch<React.SetStateAction<File[]>>;
+  courses: DashboardData;
 }) {
+  const router = useRouter();
+  const assignments = useMemo(
+    () =>
+      courses.flatMap((course) =>
+        course.assignments.map((assignment) => ({
+          ...assignment,
+          courseName: course.name,
+          members: course.members,
+        })),
+      ),
+    [courses],
+  );
+  const [assignmentId, setAssignmentId] = useState(assignments[0]?.id ?? "");
+  const assignment = assignments.find((item) => item.id === assignmentId);
+  const [memberId, setMemberId] = useState(assignment?.members[0]?.id ?? "");
+  const [exerciseId, setExerciseId] = useState("");
+  const [pending, setPending] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [message, setMessage] = useState("");
+  const chooseFiles = (incoming: File[]) => {
+    const allowed = new Set([
+      "application/pdf",
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+    ]);
+    const invalid = incoming.find(
+      (file) => !allowed.has(file.type) || file.size > 25 * 1024 * 1024,
+    );
+    if (invalid) {
+      setMessage(`${invalid.name}: formato no permitido o supera 25 MB.`);
+      return;
+    }
+    setPending(incoming.slice(0, 20));
+    setMessage("");
+  };
+  const submit = async () => {
+    if (!assignment || !memberId || !pending.length) return;
+    setUploading(true);
+    setMessage("");
+    setProgress(0);
+    const uploadId = crypto.randomUUID();
+    try {
+      const completed: Array<{ pathname: string; originalName: string; exerciseId: string | null }> = [];
+      for (const [index, file] of pending.entries()) {
+        const payload = {
+          assignmentId: assignment.id,
+          memberId,
+          exerciseId: exerciseId || null,
+          uploadId,
+          originalName: file.name,
+        };
+        const blob = await upload(
+          submissionPath(assignment.id, uploadId, file.name),
+          file,
+          {
+            access: "private",
+            handleUploadUrl: "/api/submissions/upload",
+            clientPayload: JSON.stringify(payload),
+            contentType: file.type,
+            multipart: file.size > 5 * 1024 * 1024,
+            onUploadProgress: ({ percentage }) =>
+              setProgress(Math.round(((index + percentage / 100) / pending.length) * 100)),
+          },
+        );
+        completed.push({ pathname: blob.pathname, originalName: file.name, exerciseId: exerciseId || null });
+      }
+      const response = await fetch("/api/submissions/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assignmentId: assignment.id, memberId, uploadId, files: completed }),
+      });
+      const result = (await response.json()) as { ok?: boolean; error?: string; version?: number };
+      if (!response.ok || !result.ok) throw new Error(result.error || "No se pudo registrar la entrega.");
+      setFiles((current) => [...current, ...pending]);
+      setPending([]);
+      setProgress(100);
+      setMessage(`Entrega guardada como versión ${result.version}.`);
+      router.refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo cargar la entrega.");
+    } finally {
+      setUploading(false);
+    }
+  };
+  const removeStored = async (fileId: string) => {
+    if (!window.confirm("¿Eliminar este archivo privado de forma permanente?")) return;
+    const response = await fetch(`/api/files/${fileId}`, { method: "DELETE" });
+    if (!response.ok) {
+      setMessage("No se pudo eliminar el archivo.");
+      return;
+    }
+    setMessage("Archivo eliminado.");
+    router.refresh();
+  };
   return (
     <>
-      <Title eyebrow="Tarea 5" title="Recepción de entregas">
+      <Title eyebrow="Archivos privados" title="Recepción de entregas">
         <span className="pill neutral">
-          {files.length} archivo(s) cargado(s)
+          {assignment?.submissions.length ?? 0} entrega(s) registrada(s)
         </span>
       </Title>
+      <div className="generator panel">
+        <label>
+          Tarea
+          <select
+            value={assignmentId}
+            onChange={(event) => {
+              const nextId = event.target.value;
+              const next = assignments.find((item) => item.id === nextId);
+              setAssignmentId(nextId);
+              setMemberId(next?.members[0]?.id ?? "");
+              setExerciseId("");
+            }}
+          >
+            {assignments.map((item) => (
+              <option key={item.id} value={item.id}>{item.courseName} · Tarea {item.number}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Integrante
+          <select value={memberId} onChange={(event) => setMemberId(event.target.value)}>
+            {assignment?.members.map((member) => (
+              <option key={member.id} value={member.id}>{member.fullName}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Ejercicio asociado (opcional)
+          <select value={exerciseId} onChange={(event) => setExerciseId(event.target.value)}>
+            <option value="">Entrega general</option>
+            {assignment?.sections.flatMap((section) =>
+              section.exercises.map((exercise) => (
+                <option key={exercise.id} value={exercise.id}>{section.name} · {exercise.label}</option>
+              )),
+            )}
+          </select>
+        </label>
+      </div>
       <label className="drop">
         <Upload size={32} />
         <strong>Arrastra PDFs o imágenes aquí</strong>
@@ -796,39 +936,48 @@ function Submissions({
           type="file"
           multiple
           accept="application/pdf,image/png,image/jpeg,image/webp"
-          onChange={(e) =>
-            setFiles((f) => [...f, ...Array.from(e.target.files || [])])
-          }
+          disabled={!assignment || !memberId || uploading}
+          onChange={(event) => chooseFiles(Array.from(event.target.files || []))}
         />
         <b>Seleccionar archivos</b>
       </label>
+      {pending.length > 0 && (
+        <div className="panel">
+          <p>{pending.length} archivo(s) preparados para una nueva versión.</p>
+          <button className="primary" disabled={uploading} onClick={submit}>
+            {uploading ? `Subiendo… ${progress}%` : "Guardar entrega privada"}
+          </button>
+        </div>
+      )}
+      {message && <div className="notice">{message}</div>}
       <div className="panel file-list">
-        {files.length === 0 ? (
+        {!assignment || assignment.submissions.length === 0 ? (
           <div className="empty">
             <FileText />
             <h3>Aún no hay archivos</h3>
             <p>
-              Los archivos se guardan localmente en esta demostración y se
-              incorporan al PDF final.
+              Selecciona una tarea, un integrante y los archivos recibidos.
+              Se almacenarán de forma privada y con historial de versiones.
             </p>
           </div>
         ) : (
-          files.map((f, i) => (
-            <div key={`${f.name}-${i}`}>
-              <FileText />
-              <span>
-                <b>{f.name}</b>
-                <small>
-                  {(f.size / 1024 / 1024).toFixed(2)} MB · Listo para compilar
-                </small>
-              </span>
-              <button
-                onClick={() => setFiles((x) => x.filter((_, n) => n !== i))}
-              >
-                Eliminar
-              </button>
-            </div>
-          ))
+          assignment.submissions.flatMap((submission) =>
+            submission.versions.flatMap((version) =>
+              version.files.map((file) => (
+                <div key={file.id}>
+                  <FileText />
+                  <span>
+                    <b>{submission.member.fullName} · {file.originalName}</b>
+                    <small>
+                      Versión {version.version} · {(file.sizeBytes / 1024 / 1024).toFixed(2)} MB · {submission.late ? "Entrega tardía" : "Entregado"}
+                    </small>
+                  </span>
+                  <a className="outline" href={`/api/files/${file.id}`} target="_blank">Ver</a>
+                  <button onClick={() => removeStored(file.id)}>Eliminar</button>
+                </div>
+              )),
+            ),
+          )
         )}
       </div>
     </>

@@ -38,6 +38,44 @@ export async function getDashboardData(userId: string) {
           topic: true,
           dueAt: true,
           status: true,
+          sections: {
+            orderBy: { sortOrder: "asc" },
+            select: {
+              id: true,
+              name: true,
+              exercises: {
+                orderBy: { sortOrder: "asc" },
+                select: { id: true, label: true },
+              },
+            },
+          },
+          submissions: {
+            orderBy: { receivedAt: "desc" },
+            select: {
+              id: true,
+              status: true,
+              late: true,
+              receivedAt: true,
+              member: { select: { id: true, fullName: true } },
+              versions: {
+                orderBy: { version: "desc" },
+                take: 1,
+                select: {
+                  version: true,
+                  createdAt: true,
+                  files: {
+                    orderBy: { sortOrder: "asc" },
+                    select: {
+                      id: true,
+                      originalName: true,
+                      mimeType: true,
+                      sizeBytes: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
           _count: { select: { sections: true, submissions: true } },
         },
       },
@@ -48,6 +86,14 @@ export async function getDashboardData(userId: string) {
     assignments: course.assignments.map((assignment) => ({
       ...assignment,
       dueAt: assignment.dueAt.toISOString(),
+      submissions: assignment.submissions.map((submission) => ({
+        ...submission,
+        receivedAt: submission.receivedAt?.toISOString() ?? null,
+        versions: submission.versions.map((version) => ({
+          ...version,
+          createdAt: version.createdAt.toISOString(),
+        })),
+      })),
     })),
   }));
 }

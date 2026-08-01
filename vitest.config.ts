@@ -3,7 +3,7 @@ import path from "node:path";
 export default defineConfig({
   test: {
     environment: "node",
-    exclude: ["**/node_modules/**", "**/._*"],
+    exclude: ["**/node_modules/**", "**/._*", "e2e/**"],
     coverage: { reporter: ["text", "json-summary"] },
   },
   resolve: { alias: { "@": path.resolve(__dirname, "src") } },

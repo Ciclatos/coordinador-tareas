@@ -35,6 +35,7 @@ import { createAssignmentPdf, type StoredPdfSource } from "@/lib/pdf";
 import { logout } from "@/app/(auth)/actions";
 import type { DashboardData } from "@/data/dashboard";
 import { EntityModal, type EditableEntity } from "@/components/EntityModal";
+import { PdfPageThumbnails } from "@/components/PdfPageThumbnails";
 import {
   copyMembers,
   importMembersCsv,
@@ -1868,34 +1869,48 @@ function PdfBuilder({
                     </select>
                   </label>
                   {storedFiles[i - 6].mimeType === "application/pdf" && (
-                    <label>
-                      Páginas
-                      <input
-                        aria-label={`Páginas de ${b}`}
-                        value={pageInputs[storedFiles[i - 6].id] ?? ""}
-                        placeholder="Todas"
-                        onChange={(event) => {
-                          const value = event.target.value;
+                    <>
+                      <label>
+                        Páginas
+                        <input
+                          aria-label={`Páginas de ${b}`}
+                          value={pageInputs[storedFiles[i - 6].id] ?? ""}
+                          placeholder="Todas"
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setPageInputs((current) => ({
+                              ...current,
+                              [storedFiles[i - 6].id]: value,
+                            }));
+                            try {
+                              onConfigureFile(storedFiles[i - 6].id, {
+                                selectedPages: parsePageSelection(
+                                  value,
+                                  storedFiles[i - 6].pageCount ?? undefined,
+                                ),
+                              });
+                              setConfigurationMessage("");
+                            } catch (error) {
+                              setConfigurationMessage(
+                                error instanceof Error ? error.message : "Selección inválida.",
+                              );
+                            }
+                          }}
+                        />
+                      </label>
+                      <PdfPageThumbnails
+                        url={storedFiles[i - 6].url}
+                        name={b}
+                        selectedPages={storedFiles[i - 6].selectedPages}
+                        onChange={(pages) => {
                           setPageInputs((current) => ({
                             ...current,
-                            [storedFiles[i - 6].id]: value,
+                            [storedFiles[i - 6].id]: formatPageSelection(pages),
                           }));
-                          try {
-                            onConfigureFile(storedFiles[i - 6].id, {
-                              selectedPages: parsePageSelection(
-                                value,
-                                storedFiles[i - 6].pageCount ?? undefined,
-                              ),
-                            });
-                            setConfigurationMessage("");
-                          } catch (error) {
-                            setConfigurationMessage(
-                              error instanceof Error ? error.message : "Selección inválida.",
-                            );
-                          }
+                          onConfigureFile(storedFiles[i - 6].id, { selectedPages: pages });
                         }}
                       />
-                    </label>
+                    </>
                   )}
                   <div className="block-actions">
                     <button

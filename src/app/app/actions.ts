@@ -97,7 +97,7 @@ const pdfConfigurationSchema = z.object({
     z.object({
       fileId: z.string().cuid(),
       rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]),
-      selectedPages: z.array(z.number().int().min(0).max(999)).max(1000).optional(),
+      selectedPages: z.array(z.number().int().min(0).max(999)).min(1).max(1000).optional(),
     }),
   ).max(200),
 });

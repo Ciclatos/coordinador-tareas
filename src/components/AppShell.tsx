@@ -52,6 +52,12 @@ import {
 } from "@/app/app/actions";
 import { submissionPath } from "@/lib/submission-path";
 import { formatPageSelection, parsePageSelection } from "@/lib/page-selection";
+import {
+  distributionByMember,
+  distributionBySection,
+  distributionSummaryTsv,
+  whatsappMessage,
+} from "@/lib/distribution-export";
 
 type View =
   | "Resumen"
@@ -515,6 +521,17 @@ export default function AppShell({
               setExcludedMemberIds={setExcludedMemberIds}
               distributionMode={distributionMode}
               setDistributionMode={setDistributionMode}
+              courseName={currentCourse?.name ?? "Curso"}
+              assignment={
+                currentAssignment
+                  ? {
+                      number: currentAssignment.number,
+                      title: currentAssignment.title,
+                      dueAt: currentAssignment.dueAt,
+                      instructions: currentAssignment.instructions,
+                    }
+                  : undefined
+              }
             />
           )}{" "}
           {view === "Entregas" && <Submissions courses={initialData} />}{" "}
@@ -1140,6 +1157,8 @@ function Distribution({
   setExcludedMemberIds,
   distributionMode,
   setDistributionMode,
+  courseName,
+  assignment,
 }: {
   members: Member[];
   exercises: Exercise[];
@@ -1160,9 +1179,18 @@ function Distribution({
   setExcludedMemberIds: React.Dispatch<React.SetStateAction<string[]>>;
   distributionMode: DistributionMode;
   setDistributionMode: (mode: DistributionMode) => void;
+  courseName: string;
+  assignment?: {
+    number: number;
+    title: string;
+    dueAt: string;
+    instructions?: string | null;
+  };
 }) {
   const [saving, startSaving] = useTransition();
   const [saveMessage, setSaveMessage] = useState("");
+  const [exportView, setExportView] = useState<"section" | "member" | "summary">("member");
+  const [exportMessage, setExportMessage] = useState("");
   const move = (eid: string, mid: string) =>
     setAllocations((a) =>
       a.map((x) =>
@@ -1203,6 +1231,30 @@ function Distribution({
     allocations.length === exercises.length &&
     new Set(allocations.map((allocation) => allocation.exerciseId)).size === exercises.length &&
     allocations.every((allocation) => eligibleMembers.some((member) => member.id === allocation.memberId));
+  const sectionView = distributionBySection(exercises, allocations, eligibleMembers);
+  const memberView = distributionByMember(exercises, allocations, eligibleMembers);
+  const summaryView = distributionSummaryTsv(exercises, allocations, eligibleMembers);
+  const exportedText =
+    exportView === "section" ? sectionView : exportView === "member" ? memberView : summaryView;
+  const generatedWhatsapp = assignment
+    ? whatsappMessage({
+        courseName,
+        assignmentNumber: assignment.number,
+        title: assignment.title,
+        dueAt: assignment.dueAt,
+        instructions: assignment.instructions,
+        memberView,
+      })
+    : "Crea una tarea para generar el mensaje.";
+  const [whatsapp, setWhatsapp] = useState(generatedWhatsapp);
+  const copy = async (text: string, success: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setExportMessage(success);
+    } catch {
+      setExportMessage("El navegador no permitió copiar. Selecciona el texto manualmente.");
+    }
+  };
   return (
     <>
       <Title
@@ -1435,8 +1487,84 @@ function Distribution({
         <CheckCircle2 /> {distributionComplete ? "Cobertura completa" : "Distribución pendiente"}: {allocations.length} de {exercises.length} asignados · {excludedMemberIds.length} excluidos · semilla 5
       </div>
       {saveMessage && <div className="notice">{saveMessage}</div>}
+      <div className="distribution-exports">
+        <section className="panel">
+          <div className="panel-head">
+            <div>
+              <h3>Vistas para compartir</h3>
+              <p>Copia la distribución como texto, tabla TSV o imagen.</p>
+            </div>
+            <div className="view-tabs">
+              <button className={exportView === "section" ? "active" : ""} onClick={() => setExportView("section")}>Por sección</button>
+              <button className={exportView === "member" ? "active" : ""} onClick={() => setExportView("member")}>Por integrante</button>
+              <button className={exportView === "summary" ? "active" : ""} onClick={() => setExportView("summary")}>Resumen</button>
+            </div>
+          </div>
+          <pre className="export-preview">{exportedText || "Genera una distribución para ver la exportación."}</pre>
+          <div className="title-actions">
+            <button className="outline" onClick={() => copy(exportedText, "Vista copiada.")}>Copiar {exportView === "summary" ? "tabla" : "texto"}</button>
+            <button
+              className="outline"
+              onClick={async () => setExportMessage(await copyDistributionImage(exportedText))}
+            >
+              Copiar como imagen
+            </button>
+          </div>
+        </section>
+        <section className="panel whatsapp-panel">
+          <h3>Mensaje para WhatsApp</h3>
+          <p>Editable antes de copiar o compartir; no se envía automáticamente.</p>
+          <textarea value={whatsapp} onChange={(event) => setWhatsapp(event.target.value)} rows={13} />
+          <div className="title-actions">
+            <button className="outline" onClick={() => setWhatsapp(generatedWhatsapp)}>Regenerar</button>
+            <button className="outline" onClick={() => copy(whatsapp, "Mensaje copiado.")}>Copiar mensaje</button>
+            <button
+              className="primary"
+              disabled={typeof navigator !== "undefined" && !("share" in navigator)}
+              onClick={() => navigator.share?.({ text: whatsapp, title: `${courseName} - Tarea ${assignment?.number ?? ""}` })}
+            >
+              Compartir
+            </button>
+          </div>
+        </section>
+      </div>
+      {exportMessage && <div className="notice">{exportMessage}</div>}
     </>
   );
+}
+async function copyDistributionImage(text: string) {
+  if (!text.trim()) return "No hay contenido para convertir en imagen.";
+  const lines = text.split("\n");
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) return "No se pudo crear la imagen.";
+  context.font = "16px ui-monospace, monospace";
+  const width = Math.min(1800, Math.max(600, ...lines.map((line) => context.measureText(line).width + 64)));
+  canvas.width = width;
+  canvas.height = Math.max(180, lines.length * 24 + 64);
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#173f34";
+  context.font = "16px ui-monospace, monospace";
+  lines.forEach((line, index) => context.fillText(line, 32, 42 + index * 24));
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+  if (!blob) return "No se pudo crear la imagen.";
+  try {
+    if (navigator.clipboard && "ClipboardItem" in window) {
+      await navigator.clipboard.write([
+        new ClipboardItem({ "image/png": blob }),
+      ]);
+      return "Imagen copiada al portapapeles.";
+    }
+  } catch {
+    // Continúa con descarga local como alternativa segura.
+  }
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "distribucion.png";
+  link.click();
+  URL.revokeObjectURL(link.href);
+  return "El navegador descargó la imagen porque no admite copiarla.";
 }
 function generateSafe(
   input: string,

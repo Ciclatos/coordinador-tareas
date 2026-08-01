@@ -1,0 +1,7 @@
+references/
+tmp/
+output/
+.next/
+._*
+AGENTS.md
+CLAUDE.md

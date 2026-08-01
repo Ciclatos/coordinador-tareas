@@ -4,7 +4,7 @@ Aplicación web en español para coordinar tareas grupales universitarias: defin
 
 ## Enlaces
 
-- Producción: pendiente de asignación durante el primer despliegue.
+- Producción: [coordinador-tareas.vercel.app](https://coordinador-tareas.vercel.app)
 - Repositorio: [github.com/Ciclatos/coordinador-tareas](https://github.com/Ciclatos/coordinador-tareas)
 
 ## Funcionalidad

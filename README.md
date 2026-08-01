@@ -79,6 +79,12 @@ npm run check
 
 Las pruebas unitarias cubren reglas de ejercicios, reinicio por sección, números repetidos entre secciones, distribución determinista, historial, exclusiones, bloqueos, pesos, notas, reporte, autenticación, protección de rutas, selección de páginas y firmas reales de archivos. `npm run test:e2e` ejecuta el flujo Playwright de registro, curso, integrante, tarea, distribución, evaluación y persistencia tras recargar.
 
+Para ejecutar el mismo flujo contra un despliegue existente sin iniciar el servidor local:
+
+```bash
+PLAYWRIGHT_BASE_URL=https://coordinador-tareas.vercel.app npm run test:e2e
+```
+
 ## Despliegue
 
 Con una sesión de Vercel autenticada:

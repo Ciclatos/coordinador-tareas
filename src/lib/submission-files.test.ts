@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { detectMimeType } from "@/lib/submission-files";
+import { PDFDocument } from "pdf-lib";
+import { detectMimeType, inspectSubmissionStream } from "@/lib/submission-files";
 import { sanitizeFileName, submissionPath } from "@/lib/submission-path";
 
 describe("archivos de entregas", () => {
@@ -29,5 +30,20 @@ describe("archivos de entregas", () => {
     expect(submissionPath("tarea1", "carga1", "../hoja?.png")).toBe(
       "submissions/tarea1/carga1/hoja-.png",
     );
+  });
+
+  it("abre el PDF y registra su cantidad real de páginas", async () => {
+    const pdf = await PDFDocument.create();
+    pdf.addPage();
+    pdf.addPage();
+    const bytes = await pdf.save();
+    const inspected = await inspectSubmissionStream(new Blob([bytes as BlobPart]).stream());
+    expect(inspected.pageCount).toBe(2);
+    expect(inspected.mimeType).toBe("application/pdf");
+  });
+
+  it("rechaza un archivo con firma PDF pero estructura dañada", async () => {
+    const stream = new Blob(["%PDF-esto-no-es-un-pdf"]).stream();
+    await expect(inspectSubmissionStream(stream)).rejects.toThrow(/dañado/);
   });
 });

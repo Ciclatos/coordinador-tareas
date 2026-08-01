@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { PDFDocument } from "pdf-lib";
+import sharp from "sharp";
 
 export const MAX_SUBMISSION_FILE_SIZE = 25 * 1024 * 1024;
 export const ALLOWED_SUBMISSION_TYPES = [
@@ -54,6 +56,7 @@ export async function inspectSubmissionStream(
   const hash = createHash("sha256");
   const reader = stream.getReader();
   const signature: number[] = [];
+  const chunks: Uint8Array[] = [];
   let size = 0;
   for (;;) {
     const { done, value } = await reader.read();
@@ -64,6 +67,7 @@ export async function inspectSubmissionStream(
       throw new Error("El archivo supera el límite de 25 MB.");
     }
     hash.update(value);
+    chunks.push(value);
     for (const byte of value) {
       if (signature.length >= 16) break;
       signature.push(byte);
@@ -71,5 +75,25 @@ export async function inspectSubmissionStream(
   }
   const mimeType = detectMimeType(Uint8Array.from(signature));
   if (!mimeType) throw new Error("El contenido del archivo no es compatible.");
-  return { sha256: hash.digest("hex"), mimeType, size };
+  const bytes = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+  let pageCount: number | null = null;
+  if (mimeType === "application/pdf") {
+    try {
+      const pdf = await PDFDocument.load(bytes, { ignoreEncryption: false });
+      pageCount = pdf.getPageCount();
+      if (!pageCount) throw new Error("PDF vacío");
+    } catch {
+      throw new Error("El PDF está dañado, vacío o protegido con contraseña.");
+    }
+  } else {
+    try {
+      const metadata = await sharp(bytes, { failOn: "error" }).metadata();
+      if (!metadata.width || !metadata.height)
+        throw new Error("Imagen sin dimensiones");
+      pageCount = 1;
+    } catch {
+      throw new Error("La imagen está dañada o incompleta.");
+    }
+  }
+  return { sha256: hash.digest("hex"), mimeType, size, pageCount };
 }

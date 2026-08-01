@@ -74,4 +74,27 @@ describe("constructor PDF", () => {
     const pdf = await PDFDocument.load(bytes);
     expect(pdf.getPageCount()).toBe(8);
   });
+
+  it("aplica selección de páginas y rotación a una entrega almacenada", async () => {
+    const source = await PDFDocument.create();
+    source.addPage([612, 792]);
+    source.addPage([612, 792]);
+    source.addPage([612, 792]);
+    const sourceBytes = await source.save();
+    const input = data();
+    input.storedFiles = [
+      {
+        id: "stored-1",
+        name: "entrega-almacenada.pdf",
+        mimeType: "application/pdf",
+        url: `data:application/pdf;base64,${Buffer.from(sourceBytes).toString("base64")}`,
+        selectedPages: [1],
+        rotation: 90,
+      },
+    ];
+    const bytes = await createAssignmentPdf(input);
+    const pdf = await PDFDocument.load(bytes);
+    expect(pdf.getPageCount()).toBe(7);
+    expect(pdf.getPage(6).getRotation().angle).toBe(90);
+  });
 });

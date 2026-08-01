@@ -68,6 +68,7 @@ export async function POST(request: Request) {
     mimeType: string;
     size: number;
     sha256: string;
+    pageCount: number | null;
   }> = [];
   try {
     for (const file of files) {
@@ -128,6 +129,7 @@ export async function POST(request: Request) {
             mimeType: file.mimeType,
             kind: file.mimeType === "application/pdf" ? "PDF" : "IMAGE",
             sizeBytes: file.size,
+            pageCount: file.pageCount,
             sortOrder,
             sha256: file.sha256,
           })),

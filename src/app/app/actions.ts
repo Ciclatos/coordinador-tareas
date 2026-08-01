@@ -91,6 +91,16 @@ const profileSchema = z.object({
   degree: z.string().trim().max(160).optional(),
   timezone: z.string().trim().min(3).max(80).default("America/Guatemala"),
 });
+const pdfConfigurationSchema = z.object({
+  assignmentId: z.string().cuid(),
+  files: z.array(
+    z.object({
+      fileId: z.string().cuid(),
+      rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]),
+      selectedPages: z.array(z.number().int().min(0).max(999)).max(1000).optional(),
+    }),
+  ).max(200),
+});
 
 async function ownsCourse(userId: string, courseId: string) {
   return Boolean(
@@ -546,6 +556,69 @@ export async function saveDistribution(
   });
   revalidatePath("/app");
   return { ok: true, message: "Distribución guardada y reproducible." };
+}
+
+export async function savePdfConfiguration(
+  input: z.infer<typeof pdfConfigurationSchema>,
+): Promise<{ ok: boolean; message: string }> {
+  const { userId } = await requireSession();
+  const parsed = pdfConfigurationSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: "La configuración del PDF es inválida." };
+  if (new Set(parsed.data.files.map((file) => file.fileId)).size !== parsed.data.files.length)
+    return { ok: false, message: "Hay archivos repetidos en la configuración." };
+  const assignment = await prisma.assignment.findFirst({
+    where: { id: parsed.data.assignmentId, course: { userId } },
+    select: {
+      id: true,
+      submissions: {
+        select: {
+          versions: {
+            select: { files: { select: { id: true, pageCount: true, mimeType: true } } },
+          },
+        },
+      },
+    },
+  });
+  if (!assignment) return { ok: false, message: "No tienes acceso a esta tarea." };
+  const storedFiles = assignment.submissions.flatMap((submission) =>
+    submission.versions.flatMap((version) => version.files),
+  );
+  const allowed = new Set(
+    storedFiles.map((file) => file.id),
+  );
+  if (parsed.data.files.some((file) => !allowed.has(file.fileId)))
+    return { ok: false, message: "La configuración contiene un archivo ajeno a la tarea." };
+  for (const file of parsed.data.files) {
+    const stored = storedFiles.find((item) => item.id === file.fileId)!;
+    if (stored.mimeType !== "application/pdf" && file.selectedPages?.length)
+      return { ok: false, message: "Solo los archivos PDF admiten selección de páginas." };
+    if (
+      file.selectedPages &&
+      (new Set(file.selectedPages).size !== file.selectedPages.length ||
+        file.selectedPages.some((page) => stored.pageCount !== null && page >= stored.pageCount))
+    )
+      return { ok: false, message: `La selección de páginas de un archivo es inválida.` };
+  }
+  await prisma.$transaction([
+    ...parsed.data.files.map((file) =>
+      prisma.submissionFile.update({
+        where: { id: file.fileId },
+        data: { rotation: file.rotation },
+      }),
+    ),
+    prisma.assignment.update({
+      where: { id: assignment.id },
+      data: {
+        pdfOrder: parsed.data.files.map((file, sortOrder) => ({
+          fileId: file.fileId,
+          sortOrder,
+          selectedPages: file.selectedPages ?? null,
+        })),
+      },
+    }),
+  ]);
+  revalidatePath("/app");
+  return { ok: true, message: "Orden, rotación y páginas guardados." };
 }
 
 export async function saveEvaluations(

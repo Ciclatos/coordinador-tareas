@@ -41,6 +41,7 @@ import {
   moveMember,
   saveDistribution,
   saveEvaluations,
+  savePdfConfiguration,
   saveWeeklyReport,
   setAssignmentArchived,
   setCourseActive,
@@ -48,6 +49,7 @@ import {
   updateProfile,
 } from "@/app/app/actions";
 import { submissionPath } from "@/lib/submission-path";
+import { formatPageSelection, parsePageSelection } from "@/lib/page-selection";
 
 type View =
   | "Resumen"
@@ -63,6 +65,19 @@ type ModalState = {
   mode: "course" | "member" | "assignment";
   initial?: EditableEntity;
 };
+type PdfPreference = { fileId: string; sortOrder: number; selectedPages?: number[] };
+function pdfPreferences(value: unknown): PdfPreference[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const candidate = item as Record<string, unknown>;
+    if (typeof candidate.fileId !== "string" || typeof candidate.sortOrder !== "number") return [];
+    const selectedPages = Array.isArray(candidate.selectedPages)
+      ? candidate.selectedPages.filter((page): page is number => Number.isInteger(page) && page >= 0)
+      : undefined;
+    return [{ fileId: candidate.fileId, sortOrder: candidate.sortOrder, selectedPages }];
+  });
+}
 const nav: [View, typeof LayoutDashboard][] = [
   ["Resumen", LayoutDashboard],
   ["Cursos", BookOpen],
@@ -183,13 +198,32 @@ export default function AppShell({
           name: file.originalName,
           mimeType: file.mimeType,
           url: `/api/files/${file.id}`,
+          rotation: ([0, 90, 180, 270].includes(file.rotation) ? file.rotation : 0) as
+            | 0
+            | 90
+            | 180
+            | 270,
+          selectedPages: pdfPreferences(currentAssignment.pdfOrder).find(
+            (preference) => preference.fileId === file.id,
+          )?.selectedPages,
+          pageCount: file.pageCount,
         })),
       ),
     ) ?? [];
   const [pdfFileOrder, setPdfFileOrder] = useState<string[]>(() =>
-    storedPdfFiles.map((file) => file.id),
+    [...storedPdfFiles]
+      .sort((left, right) => {
+        const preferences = pdfPreferences(currentAssignment?.pdfOrder);
+        const leftOrder = preferences.find((item) => item.fileId === left.id)?.sortOrder;
+        const rightOrder = preferences.find((item) => item.fileId === right.id)?.sortOrder;
+        return (leftOrder ?? Number.MAX_SAFE_INTEGER) - (rightOrder ?? Number.MAX_SAFE_INTEGER);
+      })
+      .map((file) => file.id),
   );
-  const orderedStoredPdfFiles = [...storedPdfFiles].sort((left, right) => {
+  const [pdfOptions, setPdfOptions] = useState<Record<string, Pick<StoredPdfSource, "rotation" | "selectedPages">>>(
+    () => Object.fromEntries(storedPdfFiles.map((file) => [file.id, { rotation: file.rotation, selectedPages: file.selectedPages }])),
+  );
+  const orderedStoredPdfFiles = storedPdfFiles.map((file) => ({ ...file, ...pdfOptions[file.id] })).sort((left, right) => {
     const leftIndex = pdfFileOrder.indexOf(left.id);
     const rightIndex = pdfFileOrder.indexOf(right.id);
     return (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex) -
@@ -468,6 +502,12 @@ export default function AppShell({
                   [next[index], next[target]] = [next[target], next[index]];
                   return next;
                 })
+              }
+              onConfigureFile={(fileId, options) =>
+                setPdfOptions((current) => ({
+                  ...current,
+                  [fileId]: { ...current[fileId], ...options },
+                }))
               }
               download={download}
               members={activeMembers}
@@ -1674,6 +1714,7 @@ function PdfBuilder({
   reportBody,
   setReportBody,
   onMoveFile,
+  onConfigureFile,
 }: {
   storedFiles: StoredPdfSource[];
   download: () => void;
@@ -1682,9 +1723,20 @@ function PdfBuilder({
   reportBody: string;
   setReportBody: (body: string) => void;
   onMoveFile: (fileId: string, direction: -1 | 1) => void;
+  onConfigureFile: (
+    fileId: string,
+    options: Pick<StoredPdfSource, "rotation" | "selectedPages">,
+  ) => void;
 }) {
   const [savingReport, startSavingReport] = useTransition();
+  const [savingConfiguration, startSavingConfiguration] = useTransition();
   const [reportMessage, setReportMessage] = useState("");
+  const [configurationMessage, setConfigurationMessage] = useState("");
+  const [pageInputs, setPageInputs] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      storedFiles.map((file) => [file.id, formatPageSelection(file.selectedPages)]),
+    ),
+  );
   const blocks = [
     "Portada del reporte",
     "Desempeño grupal",
@@ -1751,8 +1803,40 @@ function PdfBuilder({
       </div>
       <div className="builder">
         <div className="panel">
-          <h3>Orden de páginas</h3>
-          <p>Usa los controles para ajustar el orden de las entregas.</p>
+          <div className="panel-head">
+            <div>
+              <h3>Orden y páginas</h3>
+              <p>Ordena archivos, rota su contenido y elige páginas PDF con rangos como 1-3,5.</p>
+            </div>
+            <button
+              className="primary"
+              disabled={!assignmentId || savingConfiguration}
+              onClick={() =>
+                assignmentId &&
+                startSavingConfiguration(async () => {
+                  try {
+                    const files = storedFiles.map((file) => ({
+                      fileId: file.id,
+                      rotation: file.rotation ?? 0,
+                      selectedPages:
+                        file.mimeType === "application/pdf"
+                          ? parsePageSelection(pageInputs[file.id] ?? "", file.pageCount ?? undefined)
+                          : undefined,
+                    }));
+                    const result = await savePdfConfiguration({ assignmentId, files });
+                    setConfigurationMessage(result.message);
+                  } catch (error) {
+                    setConfigurationMessage(
+                      error instanceof Error ? error.message : "Configuración inválida.",
+                    );
+                  }
+                })
+              }
+            >
+              {savingConfiguration ? "Guardando…" : "Guardar configuración"}
+            </button>
+          </div>
+          {configurationMessage && <p className="notice">{configurationMessage}</p>}
           {blocks.map((b, i) => (
             <div className="block" key={`${b}-${i}`}>
               <b>⋮⋮</b>
@@ -1765,21 +1849,70 @@ function PdfBuilder({
                 </small>
               </span>
               {i >= 6 && (
-                <div className="block-actions">
-                  <button
-                    aria-label={`Subir ${b}`}
-                    disabled={i === 6}
-                    onClick={() => onMoveFile(storedFiles[i - 6].id, -1)}
-                  >
-                    ↑
-                  </button>
-                  <button
-                    aria-label={`Bajar ${b}`}
-                    disabled={i === blocks.length - 1}
-                    onClick={() => onMoveFile(storedFiles[i - 6].id, 1)}
-                  >
-                    ↓
-                  </button>
+                <div className="file-controls">
+                  <label>
+                    Rotación
+                    <select
+                      aria-label={`Rotación de ${b}`}
+                      value={storedFiles[i - 6].rotation ?? 0}
+                      onChange={(event) =>
+                        onConfigureFile(storedFiles[i - 6].id, {
+                          rotation: Number(event.target.value) as 0 | 90 | 180 | 270,
+                        })
+                      }
+                    >
+                      <option value="0">0°</option>
+                      <option value="90">90°</option>
+                      <option value="180">180°</option>
+                      <option value="270">270°</option>
+                    </select>
+                  </label>
+                  {storedFiles[i - 6].mimeType === "application/pdf" && (
+                    <label>
+                      Páginas
+                      <input
+                        aria-label={`Páginas de ${b}`}
+                        value={pageInputs[storedFiles[i - 6].id] ?? ""}
+                        placeholder="Todas"
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setPageInputs((current) => ({
+                            ...current,
+                            [storedFiles[i - 6].id]: value,
+                          }));
+                          try {
+                            onConfigureFile(storedFiles[i - 6].id, {
+                              selectedPages: parsePageSelection(
+                                value,
+                                storedFiles[i - 6].pageCount ?? undefined,
+                              ),
+                            });
+                            setConfigurationMessage("");
+                          } catch (error) {
+                            setConfigurationMessage(
+                              error instanceof Error ? error.message : "Selección inválida.",
+                            );
+                          }
+                        }}
+                      />
+                    </label>
+                  )}
+                  <div className="block-actions">
+                    <button
+                      aria-label={`Subir ${b}`}
+                      disabled={i === 6}
+                      onClick={() => onMoveFile(storedFiles[i - 6].id, -1)}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      aria-label={`Bajar ${b}`}
+                      disabled={i === blocks.length - 1}
+                      onClick={() => onMoveFile(storedFiles[i - 6].id, 1)}
+                    >
+                      ↓
+                    </button>
+                  </div>
                 </div>
               )}
               <em>{i + 1}</em>

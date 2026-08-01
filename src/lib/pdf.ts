@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { PDFDocument, StandardFonts, degrees, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import type { Allocation, Exercise, Member } from "./domain";
 
 export type StoredPdfSource = {
@@ -6,6 +6,9 @@ export type StoredPdfSource = {
   name: string;
   mimeType: string;
   url: string;
+  rotation?: 0 | 90 | 180 | 270;
+  selectedPages?: number[];
+  pageCount?: number | null;
 };
 
 export type AssignmentPdfData = {
@@ -118,8 +121,11 @@ async function sourceBytes(source: File | StoredPdfSource) {
   return { bytes: new Uint8Array(await response.arrayBuffer()), mimeType: source.mimeType, name: source.name };
 }
 
-async function convertWebp(bytes: Uint8Array) {
-  const bitmap = await createImageBitmap(new Blob([bytes as BlobPart], { type: "image/webp" }));
+async function normalizeImage(bytes: Uint8Array, mimeType: string) {
+  const bitmap = await createImageBitmap(
+    new Blob([bytes as BlobPart], { type: mimeType }),
+    { imageOrientation: "from-image" },
+  );
   const canvas = document.createElement("canvas");
   canvas.width = bitmap.width;
   canvas.height = bitmap.height;
@@ -311,16 +317,29 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
     const file = await sourceBytes(source);
     if (file.mimeType === "application/pdf") {
       const sourceDoc = await PDFDocument.load(file.bytes, { ignoreEncryption: false });
-      const copied = await doc.copyPages(sourceDoc, sourceDoc.getPageIndices());
+      const available = sourceDoc.getPageIndices();
+      const requested = source instanceof File ? undefined : source.selectedPages;
+      const indexes = requested?.length
+        ? requested.filter((index) => available.includes(index))
+        : available;
+      if (!indexes.length) throw new Error(`${file.name} no tiene páginas seleccionadas válidas.`);
+      const copied = await doc.copyPages(sourceDoc, indexes);
       for (const copiedPage of copied) {
+        if (!(source instanceof File) && source.rotation)
+          copiedPage.setRotation(
+            degrees((copiedPage.getRotation().angle + source.rotation) % 360),
+          );
         doc.addPage(copiedPage);
         pageNumber += 1;
         copiedPageIndexes.add(doc.getPageCount() - 1);
       }
       continue;
     }
-    const imageBytes = file.mimeType === "image/webp" ? await convertWebp(file.bytes) : file.bytes;
-    const image = file.mimeType === "image/jpeg" ? await doc.embedJpg(imageBytes) : await doc.embedPng(imageBytes);
+    const needsNormalization = file.mimeType === "image/webp" || file.mimeType === "image/jpeg";
+    const imageBytes = needsNormalization
+      ? await normalizeImage(file.bytes, file.mimeType)
+      : file.bytes;
+    const image = await doc.embedPng(imageBytes);
     page = doc.addPage(letter);
     pageNumber += 1;
     const scale = Math.min(540 / image.width, 700 / image.height);
@@ -331,6 +350,8 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
       height: image.height * scale,
     });
     footer(page, pageNumber, file.name, fonts);
+    if (!(source instanceof File) && source.rotation)
+      page.setRotation(degrees(source.rotation));
   }
 
   // Numera también las páginas PDF incorporadas sin alterar su contenido principal.

@@ -47,6 +47,7 @@ export async function getDashboardData(userId: string) {
           instructions: true,
           dueAt: true,
           status: true,
+          pdfOrder: true,
           exclusions: { select: { memberId: true, reason: true } },
           sections: {
             orderBy: { sortOrder: "asc" },
@@ -87,6 +88,8 @@ export async function getDashboardData(userId: string) {
                       originalName: true,
                       mimeType: true,
                       sizeBytes: true,
+                      rotation: true,
+                      pageCount: true,
                     },
                   },
                 },

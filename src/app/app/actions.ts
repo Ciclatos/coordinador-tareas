@@ -79,6 +79,16 @@ const reportSchema = z.object({
   assignmentId: z.string().cuid(),
   body: z.string().trim().min(50).max(10000).optional(),
 });
+const profileSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  systemName: z.string().trim().min(2).max(80),
+  university: z.string().trim().max(160).optional(),
+  faculty: z.string().trim().max(160).optional(),
+  campus: z.string().trim().max(120).optional(),
+  shift: z.string().trim().max(80).optional(),
+  degree: z.string().trim().max(160).optional(),
+  timezone: z.string().trim().min(3).max(80).default("America/Guatemala"),
+});
 
 async function ownsCourse(userId: string, courseId: string) {
   return Boolean(
@@ -404,4 +414,40 @@ export async function saveWeeklyReport(
       ? "Reporte editado guardado."
       : "Reporte generado con los datos actuales.",
   };
+}
+
+export async function updateProfile(
+  input: z.infer<typeof profileSchema>,
+): Promise<{ ok: boolean; message: string }> {
+  const { userId } = await requireSession();
+  const parsed = profileSchema.safeParse(input);
+  if (!parsed.success)
+    return { ok: false, message: "Revisa los datos de configuración." };
+  const optional = (value?: string) => value || null;
+  await prisma.userProfile.upsert({
+    where: { userId },
+    update: {
+      name: parsed.data.name,
+      systemName: parsed.data.systemName,
+      university: optional(parsed.data.university),
+      faculty: optional(parsed.data.faculty),
+      campus: optional(parsed.data.campus),
+      shift: optional(parsed.data.shift),
+      degree: optional(parsed.data.degree),
+      timezone: parsed.data.timezone,
+    },
+    create: {
+      userId,
+      name: parsed.data.name,
+      systemName: parsed.data.systemName,
+      university: optional(parsed.data.university),
+      faculty: optional(parsed.data.faculty),
+      campus: optional(parsed.data.campus),
+      shift: optional(parsed.data.shift),
+      degree: optional(parsed.data.degree),
+      timezone: parsed.data.timezone,
+    },
+  });
+  revalidatePath("/app");
+  return { ok: true, message: "Configuración guardada." };
 }

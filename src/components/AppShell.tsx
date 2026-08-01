@@ -35,6 +35,7 @@ import {
   saveDistribution,
   saveEvaluations,
   saveWeeklyReport,
+  updateProfile,
 } from "@/app/app/actions";
 import { submissionPath } from "@/lib/submission-path";
 
@@ -59,12 +60,6 @@ const nav: [View, typeof LayoutDashboard][] = [
   ["PDF final", FileDown],
   ["Configuración", Settings],
 ];
-const sections = [
-  { id: "s53", name: "Sección 5.3", labels: ["5", "10", "15", "20", "25"] },
-  { id: "s54", name: "Sección 5.4", labels: ["5", "10", "15", "20", "25"] },
-  { id: "s55", name: "Sección 5.5", labels: ["5", "10", "15", "20", "25"] },
-];
-
 export default function AppShell({
   currentUser = {
     name: "Carlos Díaz",
@@ -83,6 +78,8 @@ export default function AppShell({
   };
   initialData?: DashboardData;
 }) {
+  const currentCourse = initialData[0];
+  const currentAssignment = currentCourse?.assignments[0];
   const members = useMemo(
     () =>
       initialData[0]?.members.map((member) => ({
@@ -97,11 +94,40 @@ export default function AppShell({
   );
   const [view, setView] = useState<View>("Resumen");
   const [menu, setMenu] = useState(false);
+  const [sectionDefs, setSectionDefs] = useState(() =>
+    currentAssignment?.sections.length
+      ? currentAssignment.sections.map((section) => ({
+          id: section.id,
+          name: section.name,
+          labels: section.exercises.map((exercise) => exercise.label),
+        }))
+      : [{ id: "draft-section-1", name: "Sección 1", labels: [] as string[] }],
+  );
   const [exercises, setExercises] = useState<Exercise[]>(() =>
-    buildExercises(sections),
+    currentAssignment?.sections.length
+      ? currentAssignment.sections.flatMap((section) =>
+          section.exercises.map((exercise) => ({
+            id: exercise.id,
+            sectionId: section.id,
+            section: section.name,
+            label: exercise.label,
+            weight: exercise.weight,
+          })),
+        )
+      : [],
   );
   const [allocations, setAllocations] = useState<Allocation[]>(() =>
-    members.length ? distribute(buildExercises(sections), members) : [],
+    currentAssignment?.sections.length
+      ? currentAssignment.sections.flatMap((section) =>
+          section.exercises.flatMap((exercise) =>
+            exercise.allocations.map((allocation) => ({
+              exerciseId: exercise.id,
+              memberId: allocation.memberId,
+              locked: allocation.locked,
+            })),
+          ),
+        )
+      : [],
   );
   const [modal, setModal] = useState<"course" | "member" | "assignment" | null>(
     null,
@@ -111,8 +137,6 @@ export default function AppShell({
   >("multiple");
   const [input, setInput] = useState("5 al 25");
   const [toast, setToast] = useState("");
-  const currentCourse = initialData[0];
-  const currentAssignment = currentCourse?.assignments[0];
   const defaultReport = currentAssignment
     ? reportText(
         currentAssignment.sections.map((section) => section.name),
@@ -135,6 +159,15 @@ export default function AppShell({
         })),
       ),
     ) ?? [];
+  const [pdfFileOrder, setPdfFileOrder] = useState<string[]>(() =>
+    storedPdfFiles.map((file) => file.id),
+  );
+  const orderedStoredPdfFiles = [...storedPdfFiles].sort((left, right) => {
+    const leftIndex = pdfFileOrder.indexOf(left.id);
+    const rightIndex = pdfFileOrder.indexOf(right.id);
+    return (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex) -
+      (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex);
+  });
   const currentAssignmentId = initialData[0]?.assignments[0]?.id;
   const totals = useMemo(
     () =>
@@ -155,7 +188,8 @@ export default function AppShell({
   const regenerate = () => {
     try {
       const labels = generateLabels(input, rule);
-      const next = buildExercises(sections.map((s) => ({ ...s, labels })));
+      const next = buildExercises(sectionDefs.map((section) => ({ ...section, labels })));
+      setSectionDefs((current) => current.map((section) => ({ ...section, labels })));
       setExercises(next);
       setAllocations(members.length ? distribute(next, members) : []);
       notify(`${next.length} ejercicios distribuidos sin duplicados`);
@@ -215,7 +249,7 @@ export default function AppShell({
       })),
       reportBody,
       files: [],
-      storedFiles: storedPdfFiles,
+      storedFiles: orderedStoredPdfFiles,
     });
     const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
     const url = URL.createObjectURL(blob);
@@ -298,8 +332,12 @@ export default function AppShell({
             <Menu />
           </button>
           <div>
-            <span>Matemática Discreta</span>
-            <small>Tarea 5 · Semana 5</small>
+            <span>{currentCourse?.name ?? "Sin curso seleccionado"}</span>
+            <small>
+              {currentAssignment
+                ? `Tarea ${currentAssignment.number} · Semana ${currentAssignment.weekNumber}`
+                : "Crea una tarea para comenzar"}
+            </small>
           </div>
           <button className="outline" onClick={() => go("Configuración")}>
             <Settings size={16} /> Configurar
@@ -313,6 +351,7 @@ export default function AppShell({
             <Courses
               courses={initialData}
               onCreate={() => setModal("course")}
+              onOpen={() => go("Integrantes")}
             />
           )}{" "}
           {view === "Integrantes" && (
@@ -326,12 +365,14 @@ export default function AppShell({
             <Tasks
               courses={initialData}
               onCreate={() => setModal("assignment")}
+              onOpen={() => go("Distribución")}
             />
           )}{" "}
           {view === "Distribución" && (
             <Distribution
               members={members}
               exercises={exercises}
+              setExercises={setExercises}
               allocations={allocations}
               setAllocations={setAllocations}
               rule={rule}
@@ -340,13 +381,32 @@ export default function AppShell({
               setInput={setInput}
               regenerate={regenerate}
               assignmentId={currentAssignmentId}
+              sections={sectionDefs}
+              setSections={setSectionDefs}
             />
           )}{" "}
           {view === "Entregas" && <Submissions courses={initialData} />}{" "}
           {view === "Evaluación" && <Evaluation courses={initialData} />}{" "}
           {view === "PDF final" && (
             <PdfBuilder
-              storedFiles={storedPdfFiles}
+              storedFiles={orderedStoredPdfFiles}
+              onMoveFile={(fileId, direction) =>
+                setPdfFileOrder((current) => {
+                  const complete = [
+                    ...current,
+                    ...storedPdfFiles
+                      .map((file) => file.id)
+                      .filter((id) => !current.includes(id)),
+                  ];
+                  const index = complete.indexOf(fileId);
+                  const target = index + direction;
+                  if (index < 0 || target < 0 || target >= complete.length)
+                    return complete;
+                  const next = [...complete];
+                  [next[index], next[target]] = [next[target], next[index]];
+                  return next;
+                })
+              }
               download={download}
               members={members}
               assignmentId={currentAssignmentId}
@@ -354,7 +414,7 @@ export default function AppShell({
               setReportBody={setReportBody}
             />
           )}{" "}
-          {view === "Configuración" && <SettingsView />}
+          {view === "Configuración" && <SettingsView user={currentUser} />}
         </section>
       </main>
       {toast && (
@@ -415,6 +475,25 @@ function Dashboard({
   const upcoming = assignments.filter(
     (item) => new Date(item.dueAt) > new Date(),
   ).length;
+  const currentCourse = current
+    ? data.find((course) =>
+        course.assignments.some((assignment) => assignment.id === current.id),
+      )
+    : undefined;
+  const exerciseCount =
+    current?.sections.reduce(
+      (total, section) => total + section.exercises.length,
+      0,
+    ) ?? 0;
+  const memberCount = currentCourse?.members.length ?? 0;
+  const submissionCount = current?.submissions.length ?? 0;
+  const evaluationCount = current?.evaluations.length ?? 0;
+  const pendingDeliveries = assignments.reduce((total, assignment) => {
+    const course = data.find((item) =>
+      item.assignments.some((candidate) => candidate.id === assignment.id),
+    );
+    return total + Math.max(0, (course?.members.length ?? 0) - assignment.submissions.length);
+  }, 0);
   return (
     <>
       <Title
@@ -469,7 +548,7 @@ function Dashboard({
         </article>
         <article>
           <span>Entregas pendientes</span>
-          <strong className="amber">0</strong>
+          <strong className="amber">{pendingDeliveries}</strong>
           <small>Según entregas registradas</small>
         </article>
         <article>
@@ -489,20 +568,39 @@ function Dashboard({
         </div>
         <div className="steps">
           {[
-            ["1", "Ejercicios definidos", "15 ejercicios en 3 secciones", true],
+            [
+              "1",
+              "Ejercicios definidos",
+              `${exerciseCount} ejercicios en ${current?.sections.length ?? 0} secciones`,
+              exerciseCount > 0,
+            ],
             [
               "2",
               "Distribución completada",
-              "Carga equilibrada entre 6 integrantes",
-              true,
+              exerciseCount
+                ? `Carga asignada entre ${memberCount} integrantes`
+                : "Pendiente de definir ejercicios",
+              current?.status !== "DRAFT" && exerciseCount > 0,
             ],
-            ["3", "Recibir entregas", "4 de 6 archivos recibidos", false],
-            ["4", "Evaluar integrantes", "Pendiente de revisión", false],
+            [
+              "3",
+              "Recibir entregas",
+              `${submissionCount} de ${memberCount} integrantes entregaron`,
+              memberCount > 0 && submissionCount >= memberCount,
+            ],
+            [
+              "4",
+              "Evaluar integrantes",
+              `${evaluationCount} de ${memberCount} evaluados`,
+              memberCount > 0 && evaluationCount >= memberCount,
+            ],
             [
               "5",
               "Generar PDF final",
-              "Listo cuando completes la evaluación",
-              false,
+              current?.reports.length
+                ? "Reporte semanal generado"
+                : "Listo cuando completes la evaluación",
+              Boolean(current?.reports.length),
             ],
           ].map(([n, t, d, done]) => (
             <button
@@ -537,9 +635,11 @@ function Dashboard({
 function Courses({
   courses,
   onCreate,
+  onOpen,
 }: {
   courses: DashboardData;
   onCreate: () => void;
+  onOpen: () => void;
 }) {
   return (
     <>
@@ -567,7 +667,7 @@ function Courses({
             </p>
             <footer>
               <b>{course.members.length} integrantes</b>
-              <button>Ver curso →</button>
+              <button onClick={onOpen}>Ver integrantes →</button>
             </footer>
           </article>
         ))}
@@ -596,7 +696,7 @@ function Members({
 }) {
   return (
     <>
-      <Title eyebrow="Matemática Discreta" title="Integrantes del grupo">
+      <Title eyebrow="Organización" title="Integrantes del grupo">
         <button className="primary" onClick={onCreate} disabled={!hasCourses}>
           <Plus size={17} /> Agregar integrante
         </button>
@@ -650,9 +750,11 @@ function Members({
 function Tasks({
   courses,
   onCreate,
+  onOpen,
 }: {
   courses: DashboardData;
   onCreate: () => void;
+  onOpen: () => void;
 }) {
   const assignments = courses.flatMap((course) =>
     course.assignments.map((assignment) => ({
@@ -692,7 +794,7 @@ function Tasks({
                 }).format(new Date(assignment.dueAt))}
               </p>
             </div>
-            <button className="outline">Abrir tarea</button>
+            <button className="outline" onClick={onOpen}>Abrir distribución</button>
           </div>
         ))}
         {assignments.length === 0 && (
@@ -711,6 +813,7 @@ function Tasks({
 function Distribution({
   members,
   exercises,
+  setExercises,
   allocations,
   setAllocations,
   rule,
@@ -719,9 +822,12 @@ function Distribution({
   setInput,
   regenerate,
   assignmentId,
+  sections,
+  setSections,
 }: {
   members: Member[];
   exercises: Exercise[];
+  setExercises: React.Dispatch<React.SetStateAction<Exercise[]>>;
   allocations: Allocation[];
   setAllocations: React.Dispatch<React.SetStateAction<Allocation[]>>;
   rule: "manual" | "range" | "odd" | "even" | "multiple";
@@ -730,6 +836,10 @@ function Distribution({
   setInput: (v: string) => void;
   regenerate: () => void;
   assignmentId?: string;
+  sections: Array<{ id: string; name: string; labels: string[] }>;
+  setSections: React.Dispatch<
+    React.SetStateAction<Array<{ id: string; name: string; labels: string[] }>>
+  >;
 }) {
   const [saving, startSaving] = useTransition();
   const [saveMessage, setSaveMessage] = useState("");
@@ -737,6 +847,26 @@ function Distribution({
     setAllocations((a) =>
       a.map((x) => (x.exerciseId === eid ? { ...x, memberId: mid } : x)),
     );
+  const renameSection = (id: string, name: string) => {
+    setSections((current) =>
+      current.map((section) => (section.id === id ? { ...section, name } : section)),
+    );
+    setExercises((current) =>
+      current.map((exercise) =>
+        exercise.sectionId === id ? { ...exercise, section: name } : exercise,
+      ),
+    );
+  };
+  const removeSection = (id: string) => {
+    const removedExercises = new Set(
+      exercises.filter((exercise) => exercise.sectionId === id).map((exercise) => exercise.id),
+    );
+    setSections((current) => current.filter((section) => section.id !== id));
+    setExercises((current) => current.filter((exercise) => exercise.sectionId !== id));
+    setAllocations((current) =>
+      current.filter((allocation) => !removedExercises.has(allocation.exerciseId)),
+    );
+  };
   return (
     <>
       <Title
@@ -772,6 +902,50 @@ function Distribution({
           </button>
         </div>
       </Title>
+      <div className="panel section-editor">
+        <div className="panel-head">
+          <div>
+            <h3>Secciones de la tarea</h3>
+            <p>Cada sección conserva su propia numeración de ejercicios.</p>
+          </div>
+          <button
+            className="outline"
+            onClick={() =>
+              setSections((current) => [
+                ...current,
+                {
+                  id: crypto.randomUUID(),
+                  name: `Sección ${current.length + 1}`,
+                  labels: [],
+                },
+              ])
+            }
+          >
+            <Plus size={16} /> Agregar sección
+          </button>
+        </div>
+        <div className="section-list">
+          {sections.map((section, index) => (
+            <div key={section.id}>
+              <label>
+                Nombre de sección {index + 1}
+                <input
+                  value={section.name}
+                  onChange={(event) => renameSection(section.id, event.target.value)}
+                />
+              </label>
+              <span>{section.labels.length} ejercicio(s)</span>
+              <button
+                aria-label={`Eliminar ${section.name}`}
+                disabled={sections.length === 1}
+                onClick={() => removeSection(section.id)}
+              >
+                Eliminar
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
       <div className="generator panel">
         <label>
           Regla de selección
@@ -1247,6 +1421,7 @@ function PdfBuilder({
   assignmentId,
   reportBody,
   setReportBody,
+  onMoveFile,
 }: {
   storedFiles: StoredPdfSource[];
   download: () => void;
@@ -1254,6 +1429,7 @@ function PdfBuilder({
   assignmentId?: string;
   reportBody: string;
   setReportBody: (body: string) => void;
+  onMoveFile: (fileId: string, direction: -1 | 1) => void;
 }) {
   const [savingReport, startSavingReport] = useTransition();
   const [reportMessage, setReportMessage] = useState("");
@@ -1324,7 +1500,7 @@ function PdfBuilder({
       <div className="builder">
         <div className="panel">
           <h3>Orden de páginas</h3>
-          <p>Arrastra los bloques para ajustar el documento.</p>
+          <p>Usa los controles para ajustar el orden de las entregas.</p>
           {blocks.map((b, i) => (
             <div className="block" key={`${b}-${i}`}>
               <b>⋮⋮</b>
@@ -1336,6 +1512,24 @@ function PdfBuilder({
                     : "Entrega recibida"}
                 </small>
               </span>
+              {i >= 6 && (
+                <div className="block-actions">
+                  <button
+                    aria-label={`Subir ${b}`}
+                    disabled={i === 6}
+                    onClick={() => onMoveFile(storedFiles[i - 6].id, -1)}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    aria-label={`Bajar ${b}`}
+                    disabled={i === blocks.length - 1}
+                    onClick={() => onMoveFile(storedFiles[i - 6].id, 1)}
+                  >
+                    ↓
+                  </button>
+                </div>
+              )}
               <em>{i + 1}</em>
             </div>
           ))}
@@ -1359,7 +1553,41 @@ function PdfBuilder({
     </>
   );
 }
-function SettingsView() {
+function SettingsView({
+  user,
+}: {
+  user: {
+    name: string;
+    systemName: string;
+    university?: string | null;
+    faculty?: string | null;
+    campus?: string | null;
+    shift?: string | null;
+    degree?: string | null;
+  };
+}) {
+  const [values, setValues] = useState({
+    name: user.name,
+    systemName: user.systemName,
+    university: user.university ?? "",
+    faculty: user.faculty ?? "",
+    campus: user.campus ?? "",
+    shift: user.shift ?? "",
+    degree: user.degree ?? "",
+    timezone: "America/Guatemala",
+  });
+  const [message, setMessage] = useState("");
+  const [saving, startSaving] = useTransition();
+  const field = (name: keyof typeof values) => ({
+    value: values[name],
+    onChange: (
+      event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
+    ) =>
+      setValues((current) => ({
+        ...current,
+        [name]: event.target.value,
+      })),
+  });
   return (
     <>
       <Title eyebrow="Preferencias" title="Configuración" />
@@ -1367,7 +1595,11 @@ function SettingsView() {
         <h3>Identidad del sistema</h3>
         <label>
           Nombre de la aplicación
-          <input defaultValue="Coordinador de Tareas" />
+          <input {...field("systemName")} />
+        </label>
+        <label>
+          Nombre del coordinador
+          <input {...field("name")} />
         </label>
         <div className="two">
           <label>
@@ -1378,9 +1610,32 @@ function SettingsView() {
           </label>
           <label>
             Zona horaria
-            <select defaultValue="America/Guatemala">
+            <select {...field("timezone")}>
               <option>America/Guatemala</option>
             </select>
+          </label>
+        </div>
+        <h3>Información institucional</h3>
+        <label>
+          Universidad
+          <input {...field("university")} />
+        </label>
+        <label>
+          Facultad
+          <input {...field("faculty")} />
+        </label>
+        <label>
+          Carrera
+          <input {...field("degree")} />
+        </label>
+        <div className="two">
+          <label>
+            Sede
+            <input {...field("campus")} />
+          </label>
+          <label>
+            Jornada
+            <input {...field("shift")} />
           </label>
         </div>
         <h3>Documento predeterminado</h3>
@@ -1398,7 +1653,19 @@ function SettingsView() {
             </select>
           </label>
         </div>
-        <button className="primary">Guardar cambios</button>
+        <button
+          className="primary"
+          disabled={saving}
+          onClick={() =>
+            startSaving(async () => {
+              const result = await updateProfile(values);
+              setMessage(result.message);
+            })
+          }
+        >
+          {saving ? "Guardando…" : "Guardar cambios"}
+        </button>
+        {message && <p className="notice">{message}</p>}
       </div>
     </>
   );

@@ -44,11 +44,17 @@ export async function POST(request: Request) {
     select: {
       id: true,
       dueAt: true,
+      exclusions: { where: { memberId }, select: { id: true } },
       sections: { select: { exercises: { select: { id: true } } } },
     },
   });
   if (!assignment)
     return NextResponse.json({ error: "No tienes acceso a esta tarea." }, { status: 403 });
+  if (assignment.exclusions.length)
+    return NextResponse.json(
+      { error: "Este integrante está excluido temporalmente de la tarea." },
+      { status: 400 },
+    );
   const exerciseIds = new Set(
     assignment.sections.flatMap((section) => section.exercises.map((item) => item.id)),
   );
@@ -130,6 +136,10 @@ export async function POST(request: Request) {
       select: { id: true, version: true },
     });
     await tx.assignment.update({ where: { id: assignmentId }, data: { status: "RECEIVING" } });
+    await tx.groupWorkloadSnapshot.updateMany({
+      where: { assignmentId, memberId },
+      data: { lateCount: late ? 1 : 0 },
+    });
     return version;
   });
   return NextResponse.json({ ok: true, version: result.version });

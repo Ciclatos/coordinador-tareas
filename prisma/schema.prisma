@@ -102,6 +102,7 @@ model CourseMember {
   submissions     Submission[]
   evaluations     MemberEvaluation[]
   snapshots       GroupWorkloadSnapshot[]
+  exclusions      AssignmentExclusion[]
 
   @@unique([courseId, carnet])
   @@index([courseId, active])
@@ -131,6 +132,7 @@ model Assignment {
   reports          Report[]
   pdfBuilds        PdfBuild[]
   snapshots        GroupWorkloadSnapshot[]
+  exclusions       AssignmentExclusion[]
 
   @@unique([courseId, number])
   @@index([courseId, status, dueAt])
@@ -331,4 +333,17 @@ model GroupWorkloadSnapshot {
   createdAt     DateTime     @default(now())
 
   @@unique([assignmentId, memberId])
+}
+
+model AssignmentExclusion {
+  id           String       @id @default(cuid())
+  assignmentId String
+  assignment   Assignment   @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  memberId     String
+  member       CourseMember @relation(fields: [memberId], references: [id])
+  reason       String?
+  createdAt    DateTime     @default(now())
+
+  @@unique([assignmentId, memberId])
+  @@index([assignmentId])
 }

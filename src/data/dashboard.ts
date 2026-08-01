@@ -47,6 +47,7 @@ export async function getDashboardData(userId: string) {
           instructions: true,
           dueAt: true,
           status: true,
+          exclusions: { select: { memberId: true, reason: true } },
           sections: {
             orderBy: { sortOrder: "asc" },
             select: {

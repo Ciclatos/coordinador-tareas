@@ -124,6 +124,9 @@ export default function AppShell({
     () => members.filter((member) => member.active),
     [members],
   );
+  const [excludedMemberIds, setExcludedMemberIds] = useState<string[]>(() =>
+    currentAssignment?.exclusions.map((exclusion) => exclusion.memberId) ?? [],
+  );
   const [exercises, setExercises] = useState<Exercise[]>(() =>
     currentAssignment?.sections.length
       ? currentAssignment.sections.flatMap((section) =>
@@ -162,6 +165,11 @@ export default function AppShell({
         Math.max(0, currentCourse.members.length - currentAssignment.submissions.length),
         currentAssignment.submissions.filter((submission) => submission.late).length,
         [],
+        currentAssignment.exclusions
+          .map((exclusion) =>
+            currentCourse.members.find((member) => member.id === exclusion.memberId)?.fullName,
+          )
+          .filter((name): name is string => Boolean(name)),
       )
     : "";
   const [reportBody, setReportBody] = useState(
@@ -210,7 +218,8 @@ export default function AppShell({
       const next = buildExercises(sectionDefs.map((section) => ({ ...section, labels })));
       setSectionDefs((current) => current.map((section) => ({ ...section, labels })));
       setExercises(next);
-      setAllocations(activeMembers.length ? distribute(next, activeMembers) : []);
+      const eligible = activeMembers.filter((member) => !excludedMemberIds.includes(member.id));
+      setAllocations(eligible.length ? distribute(next, eligible) : []);
       notify(`${next.length} ejercicios distribuidos sin duplicados`);
     } catch (e) {
       notify(e instanceof Error ? e.message : "No se pudo distribuir");
@@ -434,6 +443,8 @@ export default function AppShell({
               assignmentId={currentAssignmentId}
               sections={sectionDefs}
               setSections={setSectionDefs}
+              excludedMemberIds={excludedMemberIds}
+              setExcludedMemberIds={setExcludedMemberIds}
             />
           )}{" "}
           {view === "Entregas" && <Submissions courses={initialData} />}{" "}
@@ -1029,6 +1040,8 @@ function Distribution({
   assignmentId,
   sections,
   setSections,
+  excludedMemberIds,
+  setExcludedMemberIds,
 }: {
   members: Member[];
   exercises: Exercise[];
@@ -1045,6 +1058,8 @@ function Distribution({
   setSections: React.Dispatch<
     React.SetStateAction<Array<{ id: string; name: string; labels: string[] }>>
   >;
+  excludedMemberIds: string[];
+  setExcludedMemberIds: React.Dispatch<React.SetStateAction<string[]>>;
 }) {
   const [saving, startSaving] = useTransition();
   const [saveMessage, setSaveMessage] = useState("");
@@ -1072,6 +1087,12 @@ function Distribution({
       current.filter((allocation) => !removedExercises.has(allocation.exerciseId)),
     );
   };
+  const eligibleMembers = members.filter((member) => !excludedMemberIds.includes(member.id));
+  const distributionComplete =
+    exercises.length > 0 &&
+    allocations.length === exercises.length &&
+    new Set(allocations.map((allocation) => allocation.exerciseId)).size === exercises.length &&
+    allocations.every((allocation) => eligibleMembers.some((member) => member.id === allocation.memberId));
   return (
     <>
       <Title
@@ -1084,13 +1105,14 @@ function Distribution({
           </button>
           <button
             className="primary"
-            disabled={!assignmentId || !members.length || saving}
+            disabled={!assignmentId || !eligibleMembers.length || !distributionComplete || saving}
             onClick={() =>
               assignmentId &&
               startSaving(async () => {
                 const result = await saveDistribution({
                   assignmentId,
                   seed: "5",
+                  excludedMemberIds,
                   exercises: exercises.map((item) => ({
                     localId: item.id,
                     section: item.section,
@@ -1107,6 +1129,32 @@ function Distribution({
           </button>
         </div>
       </Title>
+      <div className="panel exclusion-panel">
+        <div>
+          <h3>Participación en esta tarea</h3>
+          <p>Excluye temporalmente a alguien sin desactivarlo en el curso. Redistribuye antes de guardar.</p>
+        </div>
+        <div className="exclusion-list">
+          {members.map((member) => (
+            <label key={member.id}>
+              <input
+                type="checkbox"
+                checked={!excludedMemberIds.includes(member.id)}
+                onChange={(event) => {
+                  setExcludedMemberIds((current) =>
+                    event.target.checked
+                      ? current.filter((id) => id !== member.id)
+                      : [...current, member.id],
+                  );
+                  if (!event.target.checked)
+                    setAllocations((current) => current.filter((item) => item.memberId !== member.id));
+                }}
+              />
+              {member.shortName}
+            </label>
+          ))}
+        </div>
+      </div>
       <div className="panel section-editor">
         <div className="panel-head">
           <div>
@@ -1190,7 +1238,7 @@ function Distribution({
             </tr>
           </thead>
           <tbody>
-            {members.map((m) => (
+            {eligibleMembers.map((m) => (
               <tr key={m.id}>
                 <td>
                   <b>{m.shortName}</b>
@@ -1213,7 +1261,7 @@ function Distribution({
                           onChange={(x) => move(e.id, x.target.value)}
                         >
                           <option value={m.id}>{e.label}</option>
-                          {members
+                          {eligibleMembers
                             .filter((o) => o.id !== m.id)
                             .map((o) => (
                               <option key={o.id} value={o.id}>
@@ -1235,8 +1283,7 @@ function Distribution({
         </table>
       </div>
       <div className="notice">
-        <CheckCircle2 /> Cobertura completa: {exercises.length} asignados · 0
-        duplicados · 0 pendientes · semilla 5
+        <CheckCircle2 /> {distributionComplete ? "Cobertura completa" : "Distribución pendiente"}: {allocations.length} de {exercises.length} asignados · {excludedMemberIds.length} excluidos · semilla 5
       </div>
       {saveMessage && <div className="notice">{saveMessage}</div>}
     </>

@@ -37,6 +37,7 @@ const assignmentSchema = z.object({
 const distributionSchema = z.object({
   assignmentId: z.string().cuid(),
   seed: z.string().min(1).max(100),
+  excludedMemberIds: z.array(z.string().cuid()).max(100).default([]),
   exercises: z
     .array(
       z.object({
@@ -421,17 +422,23 @@ export async function saveDistribution(
   const memberIds = [
     ...new Set(parsed.data.allocations.map((item) => item.memberId)),
   ];
-  const memberCount = await prisma.courseMember.count({
+  const activeMembers = await prisma.courseMember.findMany({
     where: {
       courseId: assignment.courseId,
-      id: { in: memberIds },
       active: true,
     },
+    select: { id: true },
   });
-  if (memberCount !== memberIds.length)
+  const activeMemberIds = new Set(activeMembers.map((member) => member.id));
+  const excluded = new Set(parsed.data.excludedMemberIds);
+  if (
+    excluded.size !== parsed.data.excludedMemberIds.length ||
+    [...excluded].some((id) => !activeMemberIds.has(id)) ||
+    memberIds.some((id) => !activeMemberIds.has(id) || excluded.has(id))
+  )
     return {
       ok: false,
-      message: "Hay integrantes que no pertenecen al curso.",
+      message: "Hay integrantes inválidos o excluidos dentro de la distribución.",
     };
   const exerciseIds = new Set(
     parsed.data.exercises.map((item) => item.localId),
@@ -489,6 +496,49 @@ export async function saveDistribution(
         seed: parsed.data.seed,
       })),
     });
+    await tx.assignmentExclusion.deleteMany({ where: { assignmentId: assignment.id } });
+    if (excluded.size)
+      await tx.assignmentExclusion.createMany({
+        data: [...excluded].map((memberId) => ({ assignmentId: assignment.id, memberId })),
+      });
+    const eligibleIds = activeMembers.map((member) => member.id).filter((id) => !excluded.has(id));
+    const baseCount = eligibleIds.length
+      ? Math.floor(parsed.data.exercises.length / eligibleIds.length)
+      : 0;
+    for (const member of activeMembers) {
+      const assigned = parsed.data.allocations.filter((item) => item.memberId === member.id);
+      const assignedExercises = assigned
+        .map((item) => parsed.data.exercises.find((exercise) => exercise.localId === item.exerciseId))
+        .filter((exercise): exercise is (typeof parsed.data.exercises)[number] => Boolean(exercise));
+      await tx.groupWorkloadSnapshot.upsert({
+        where: { assignmentId_memberId: { assignmentId: assignment.id, memberId: member.id } },
+        create: {
+          assignmentId: assignment.id,
+          memberId: member.id,
+          exerciseCount: assignedExercises.length,
+          totalWeight: assignedExercises.reduce((sum, exercise) => sum + exercise.weight, 0),
+          extraCount: Math.max(0, assignedExercises.length - baseCount),
+          lateCount: 0,
+          sections: [...new Set(assignedExercises.map((exercise) => exercise.section))],
+        },
+        update: {
+          exerciseCount: assignedExercises.length,
+          totalWeight: assignedExercises.reduce((sum, exercise) => sum + exercise.weight, 0),
+          extraCount: Math.max(0, assignedExercises.length - baseCount),
+          sections: [...new Set(assignedExercises.map((exercise) => exercise.section))],
+        },
+      });
+    }
+    for (const member of activeMembers) {
+      const aggregate = await tx.groupWorkloadSnapshot.aggregate({
+        where: { memberId: member.id },
+        _sum: { totalWeight: true },
+      });
+      await tx.courseMember.update({
+        where: { id: member.id },
+        data: { workloadBalance: aggregate._sum.totalWeight ?? 0 },
+      });
+    }
     await tx.assignment.update({
       where: { id: assignment.id },
       data: { status: "DISTRIBUTED" },
@@ -612,10 +662,15 @@ export async function saveWeeklyReport(
         },
       },
       submissions: { select: { late: true } },
+      exclusions: { select: { memberId: true } },
     },
   });
   if (!assignment) return { ok: false, message: "No tienes acceso a esta tarea." };
-  const memberCounts = assignment.course.members.map((member) => ({
+  const excludedIds = new Set(assignment.exclusions.map((item) => item.memberId));
+  const participatingMembers = assignment.course.members.filter(
+    (member) => !excludedIds.has(member.id),
+  );
+  const memberCounts = participatingMembers.map((member) => ({
     name: member.fullName,
     count: member.assignments.length,
   }));
@@ -627,7 +682,7 @@ export async function saveWeeklyReport(
     .map((member) => member.name);
   const pending = Math.max(
     0,
-    assignment.course.members.length - assignment.submissions.length,
+    participatingMembers.length - assignment.submissions.length,
   );
   const late = assignment.submissions.filter((submission) => submission.late).length;
   const body =
@@ -637,6 +692,11 @@ export async function saveWeeklyReport(
       pending,
       late,
       extras,
+      assignment.exclusions
+        .map((exclusion) =>
+          assignment.course.members.find((member) => member.id === exclusion.memberId)?.fullName,
+        )
+        .filter((name): name is string => Boolean(name)),
     );
   await prisma.report.create({
     data: {

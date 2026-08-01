@@ -92,4 +92,9 @@ describe("evaluación y reporte", () => {
     expect(r).toContain("planificación inicial de la tarea");
     expect(r).not.toContain("secciones .");
   });
+  it("menciona explícitamente las exclusiones temporales", () => {
+    expect(reportText(["5.3"], 0, 0, [], ["Ana", "Luis"])).toContain(
+      "Ana y Luis",
+    );
+  });
 });

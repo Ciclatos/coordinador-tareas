@@ -697,6 +697,38 @@ th small {
   align-items: end;
   margin-bottom: 16px;
 }
+.exclusion-panel {
+  padding: 17px;
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+}
+.exclusion-panel h3 {
+  margin: 0 0 5px;
+}
+.exclusion-panel p {
+  margin: 0;
+  font-size: 12px;
+}
+.exclusion-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.exclusion-list label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
 .section-editor {
   padding: 20px;
   margin-bottom: 16px;

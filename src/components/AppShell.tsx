@@ -1876,29 +1876,91 @@ function Evaluation({ courses }: { courses: DashboardData }) {
         ];
       }),
     ) as Record<string, number[]>;
+  const makeReasons = (item: (typeof assignments)[number] | undefined) =>
+    Object.fromEntries(
+      (item?.members ?? []).map((member) => {
+        const stored = item?.evaluations.find(
+          (evaluation) => evaluation.memberId === member.id,
+        );
+        return [
+          member.id,
+          stored?.scores.map((score) => score.reason ?? "") ?? criteria.map(() => ""),
+        ];
+      }),
+    ) as Record<string, string[]>;
+  const makeComments = (item: (typeof assignments)[number] | undefined) =>
+    Object.fromEntries(
+      (item?.members ?? []).map((member) => [
+        member.id,
+        item?.evaluations.find((evaluation) => evaluation.memberId === member.id)?.comments ?? "",
+      ]),
+    ) as Record<string, string>;
   const [assignmentId, setAssignmentId] = useState(assignments[0]?.id ?? "");
   const assignment = assignments.find((item) => item.id === assignmentId);
   const [scores, setScores] = useState<Record<string, number[]>>(() =>
     makeScores(assignments[0]),
   );
+  const [reasons, setReasons] = useState<Record<string, string[]>>(() =>
+    makeReasons(assignments[0]),
+  );
+  const [comments, setComments] = useState<Record<string, string>>(() =>
+    makeComments(assignments[0]),
+  );
   const [message, setMessage] = useState("");
   const [saving, startSaving] = useTransition();
   const setScore = (memberId: string, criterionIndex: number, value: number) =>
-    setScores((current) => ({
-      ...current,
-      [memberId]: (current[memberId] ?? [20, 20, 20, 20, 20]).map(
-        (score, index) => (index === criterionIndex ? value : score),
-      ),
-    }));
+    {
+      setScores((current) => ({
+        ...current,
+        [memberId]: (current[memberId] ?? [20, 20, 20, 20, 20]).map(
+          (score, index) => (index === criterionIndex ? value : score),
+        ),
+      }));
+      if (value === 20)
+        setReasons((current) => ({
+          ...current,
+          [memberId]: (current[memberId] ?? criteria.map(() => "")).map(
+            (reason, index) => (index === criterionIndex ? "" : reason),
+          ),
+        }));
+    };
   const applyAll = (value: number) =>
+    {
+      setScores(
+        Object.fromEntries(
+          (assignment?.members ?? []).map((member) => [
+            member.id,
+            criteria.map(() => value),
+          ]),
+        ),
+      );
+      if (value === 20)
+        setReasons(
+          Object.fromEntries(
+            (assignment?.members ?? []).map((member) => [
+              member.id,
+              criteria.map(() => ""),
+            ]),
+          ),
+        );
+    };
+  const copyRowToAll = (memberId: string) => {
+    const sourceScores = scores[memberId] ?? criteria.map(() => 20);
+    const sourceReasons = reasons[memberId] ?? criteria.map(() => "");
     setScores(
-      Object.fromEntries(
-        (assignment?.members ?? []).map((member) => [
-          member.id,
-          criteria.map(() => value),
-        ]),
-      ),
+      Object.fromEntries((assignment?.members ?? []).map((member) => [member.id, [...sourceScores]])),
     );
+    setReasons(
+      Object.fromEntries((assignment?.members ?? []).map((member) => [member.id, [...sourceReasons]])),
+    );
+    setMessage("Valores de la fila copiados a todos los integrantes.");
+  };
+  const resetEvaluation = () => {
+    setScores(makeScores(assignment));
+    setReasons(makeReasons(assignment));
+    setComments(makeComments(assignment));
+    setMessage("Se restauraron los últimos valores guardados.");
+  };
   return (
     <>
       <Title eyebrow="Revisión rápida" title="Evaluación del grupo">
@@ -1909,6 +1971,9 @@ function Evaluation({ courses }: { courses: DashboardData }) {
             onClick={() => applyAll(20)}
           >
             Aplicar 20 a todos
+          </button>
+          <button className="outline" disabled={!assignment} onClick={resetEvaluation}>
+            Restablecer
           </button>
           <button
             className="primary"
@@ -1921,6 +1986,8 @@ function Evaluation({ courses }: { courses: DashboardData }) {
                   evaluations: assignment.members.map((member) => ({
                     memberId: member.id,
                     scores: scores[member.id] ?? [20, 20, 20, 20, 20],
+                    reasons: reasons[member.id] ?? ["", "", "", "", ""],
+                    comments: comments[member.id] ?? "",
                   })),
                 });
                 setMessage(result.message);
@@ -1942,6 +2009,8 @@ function Evaluation({ courses }: { courses: DashboardData }) {
               );
               setAssignmentId(event.target.value);
               setScores(makeScores(next));
+              setReasons(makeReasons(next));
+              setComments(makeComments(next));
               setMessage("");
             }}
           >
@@ -1965,6 +2034,8 @@ function Evaluation({ courses }: { courses: DashboardData }) {
                 </th>
               ))}
               <th>Total</th>
+              <th>Comentario</th>
+              <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -1994,6 +2065,31 @@ function Evaluation({ courses }: { courses: DashboardData }) {
                         )
                       }
                     />
+                    <div className="score-quick" aria-label={`Notas rápidas de ${c} para ${m.fullName}`}>
+                      {[20, 18, 15, 10, 0].map((value) => (
+                        <button key={value} onClick={() => setScore(m.id, criterionIndex, value)}>
+                          {value}
+                        </button>
+                      ))}
+                    </div>
+                    {(scores[m.id]?.[criterionIndex] ?? 20) < 20 && (
+                      <input
+                        className="score-reason"
+                        value={reasons[m.id]?.[criterionIndex] ?? ""}
+                        maxLength={300}
+                        placeholder="Motivo de reducción"
+                        aria-label={`Motivo de reducción de ${c} para ${m.fullName}`}
+                        onChange={(event) =>
+                          setReasons((current) => ({
+                            ...current,
+                            [m.id]: (current[m.id] ?? criteria.map(() => "")).map(
+                              (reason, index) =>
+                                index === criterionIndex ? event.target.value : reason,
+                            ),
+                          }))
+                        }
+                      />
+                    )}
                   </td>
                 ))}
                 <td>
@@ -2003,6 +2099,22 @@ function Evaluation({ courses }: { courses: DashboardData }) {
                       0,
                     )}
                   </strong>
+                </td>
+                <td>
+                  <textarea
+                    className="evaluation-comment"
+                    value={comments[m.id] ?? ""}
+                    maxLength={1000}
+                    aria-label={`Comentario de ${m.fullName}`}
+                    onChange={(event) =>
+                      setComments((current) => ({ ...current, [m.id]: event.target.value }))
+                    }
+                  />
+                </td>
+                <td>
+                  <button className="outline" onClick={() => copyRowToAll(m.id)}>
+                    Copiar fila a todos
+                  </button>
                 </td>
               </tr>
             ))}

@@ -62,11 +62,23 @@ const evaluationSchema = z.object({
   assignmentId: z.string().cuid(),
   evaluations: z
     .array(
-      z.object({
-        memberId: z.string().cuid(),
-        scores: z.array(z.number().min(0).max(100)).length(5),
-        comments: z.string().trim().max(1000).optional(),
-      }),
+      z
+        .object({
+          memberId: z.string().cuid(),
+          scores: z.array(z.number().min(0).max(100)).length(5),
+          reasons: z.array(z.string().trim().max(300)).length(5).optional(),
+          comments: z.string().trim().max(1000).optional(),
+        })
+        .superRefine((item, context) => {
+          item.scores.forEach((score, index) => {
+            if (score < 20 && !item.reasons?.[index]?.trim())
+              context.addIssue({
+                code: "custom",
+                path: ["reasons", index],
+                message: "Indica el motivo de cada reducción.",
+              });
+          });
+        }),
     )
     .min(1)
     .max(100),
@@ -696,6 +708,10 @@ export async function saveEvaluations(
           evaluationId: evaluation.id,
           criterionId: criterion.id,
           score: item.scores[index],
+          reason:
+            item.scores[index] < criterion.maxScore
+              ? item.reasons?.[index] || null
+              : null,
         })),
       });
       await tx.groupWorkloadSnapshot.updateMany({

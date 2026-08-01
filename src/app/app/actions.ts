@@ -54,6 +54,26 @@ const distributionSchema = z.object({
     }),
   ),
 });
+const evaluationSchema = z.object({
+  assignmentId: z.string().cuid(),
+  evaluations: z
+    .array(
+      z.object({
+        memberId: z.string().cuid(),
+        scores: z.array(z.number().min(0).max(100)).length(5),
+        comments: z.string().trim().max(1000).optional(),
+      }),
+    )
+    .min(1)
+    .max(100),
+});
+const defaultCriteria = [
+  "Puntualidad",
+  "Presentación PDF",
+  "Trabajo en equipo",
+  "Comunicación",
+  "Ejercicios completos",
+];
 
 async function ownsCourse(userId: string, courseId: string) {
   return Boolean(
@@ -222,4 +242,90 @@ export async function saveDistribution(
   });
   revalidatePath("/app");
   return { ok: true, message: "Distribución guardada y reproducible." };
+}
+
+export async function saveEvaluations(
+  input: z.infer<typeof evaluationSchema>,
+): Promise<{ ok: boolean; message: string }> {
+  const { userId } = await requireSession();
+  const parsed = evaluationSchema.safeParse(input);
+  if (!parsed.success)
+    return { ok: false, message: "Las calificaciones contienen datos inválidos." };
+  const assignment = await prisma.assignment.findFirst({
+    where: { id: parsed.data.assignmentId, course: { userId } },
+    select: { id: true, courseId: true, course: { select: { members: { select: { id: true } } } } },
+  });
+  if (!assignment) return { ok: false, message: "No tienes acceso a esta tarea." };
+  const allowedMembers = new Set(assignment.course.members.map((member) => member.id));
+  if (
+    new Set(parsed.data.evaluations.map((item) => item.memberId)).size !==
+      parsed.data.evaluations.length ||
+    parsed.data.evaluations.some((item) => !allowedMembers.has(item.memberId))
+  )
+    return { ok: false, message: "Hay integrantes inválidos o repetidos." };
+
+  await prisma.$transaction(async (tx) => {
+    let template = await tx.evaluationTemplate.findFirst({
+      where: { courseId: assignment.courseId, active: true },
+      orderBy: { id: "asc" },
+      select: { id: true, criteria: { orderBy: { sortOrder: "asc" } } },
+    });
+    if (!template) {
+      template = await tx.evaluationTemplate.create({
+        data: {
+          courseId: assignment.courseId,
+          name: "Evaluación semanal predeterminada",
+          criteria: {
+            create: defaultCriteria.map((name, sortOrder) => ({
+              name,
+              maxScore: 20,
+              sortOrder,
+            })),
+          },
+        },
+        select: { id: true, criteria: { orderBy: { sortOrder: "asc" } } },
+      });
+    }
+    if (template.criteria.length !== 5)
+      throw new Error("La plantilla activa debe contener cinco criterios.");
+    for (const item of parsed.data.evaluations) {
+      if (item.scores.some((score, index) => score > template!.criteria[index].maxScore))
+        throw new Error("Una nota supera el máximo del criterio.");
+      const total = item.scores.reduce((sum, score) => sum + score, 0);
+      const evaluation = await tx.memberEvaluation.upsert({
+        where: {
+          assignmentId_memberId: {
+            assignmentId: assignment.id,
+            memberId: item.memberId,
+          },
+        },
+        update: { total, comments: item.comments || null },
+        create: {
+          assignmentId: assignment.id,
+          memberId: item.memberId,
+          total,
+          comments: item.comments || null,
+        },
+        select: { id: true },
+      });
+      await tx.criterionScore.deleteMany({ where: { evaluationId: evaluation.id } });
+      await tx.criterionScore.createMany({
+        data: template.criteria.map((criterion, index) => ({
+          evaluationId: evaluation.id,
+          criterionId: criterion.id,
+          score: item.scores[index],
+        })),
+      });
+      await tx.groupWorkloadSnapshot.updateMany({
+        where: { assignmentId: assignment.id, memberId: item.memberId },
+        data: { grade: total },
+      });
+    }
+    await tx.assignment.update({
+      where: { id: assignment.id },
+      data: { status: "REVIEW" },
+    });
+  });
+  revalidatePath("/app");
+  return { ok: true, message: "Evaluaciones guardadas correctamente." };
 }

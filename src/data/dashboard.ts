@@ -76,6 +76,21 @@ export async function getDashboardData(userId: string) {
               },
             },
           },
+          evaluations: {
+            select: {
+              memberId: true,
+              total: true,
+              comments: true,
+              scores: {
+                select: {
+                  score: true,
+                  reason: true,
+                  criterion: { select: { name: true, maxScore: true, sortOrder: true } },
+                },
+                orderBy: { criterion: { sortOrder: "asc" } },
+              },
+            },
+          },
           _count: { select: { sections: true, submissions: true } },
         },
       },

@@ -30,7 +30,7 @@ import { createAssignmentPdf } from "@/lib/pdf";
 import { logout } from "@/app/(auth)/actions";
 import type { DashboardData } from "@/data/dashboard";
 import { EntityModal } from "@/components/EntityModal";
-import { saveDistribution } from "@/app/app/actions";
+import { saveDistribution, saveEvaluations } from "@/app/app/actions";
 import { submissionPath } from "@/lib/submission-path";
 
 type View =
@@ -257,7 +257,7 @@ export default function AppShell({
               courses={initialData}
             />
           )}{" "}
-          {view === "Evaluación" && <Evaluation members={members} />}{" "}
+          {view === "Evaluación" && <Evaluation courses={initialData} />}{" "}
           {view === "PDF final" && (
             <PdfBuilder files={files} download={download} members={members} />
           )}{" "}
@@ -983,7 +983,7 @@ function Submissions({
     </>
   );
 }
-function Evaluation({ members }: { members: Member[] }) {
+function Evaluation({ courses }: { courses: DashboardData }) {
   const criteria = [
     "Puntualidad",
     "Presentación PDF",
@@ -991,11 +991,106 @@ function Evaluation({ members }: { members: Member[] }) {
     "Comunicación",
     "Ejercicios completos",
   ];
+  const assignments = useMemo(
+    () =>
+      courses.flatMap((course) =>
+        course.assignments.map((assignment) => ({
+          ...assignment,
+          courseName: course.name,
+          members: course.members,
+        })),
+      ),
+    [courses],
+  );
+  const makeScores = (item: (typeof assignments)[number] | undefined) =>
+    Object.fromEntries(
+      (item?.members ?? []).map((member) => {
+        const stored = item?.evaluations.find(
+          (evaluation) => evaluation.memberId === member.id,
+        );
+        return [
+          member.id,
+          stored?.scores.map((score) => score.score) ?? [20, 20, 20, 20, 20],
+        ];
+      }),
+    ) as Record<string, number[]>;
+  const [assignmentId, setAssignmentId] = useState(assignments[0]?.id ?? "");
+  const assignment = assignments.find((item) => item.id === assignmentId);
+  const [scores, setScores] = useState<Record<string, number[]>>(() =>
+    makeScores(assignments[0]),
+  );
+  const [message, setMessage] = useState("");
+  const [saving, startSaving] = useTransition();
+  const setScore = (memberId: string, criterionIndex: number, value: number) =>
+    setScores((current) => ({
+      ...current,
+      [memberId]: (current[memberId] ?? [20, 20, 20, 20, 20]).map(
+        (score, index) => (index === criterionIndex ? value : score),
+      ),
+    }));
+  const applyAll = (value: number) =>
+    setScores(
+      Object.fromEntries(
+        (assignment?.members ?? []).map((member) => [
+          member.id,
+          criteria.map(() => value),
+        ]),
+      ),
+    );
   return (
     <>
       <Title eyebrow="Revisión rápida" title="Evaluación del grupo">
-        <button className="primary">Guardar evaluaciones</button>
+        <div className="title-actions">
+          <button
+            className="outline"
+            disabled={!assignment}
+            onClick={() => applyAll(20)}
+          >
+            Aplicar 20 a todos
+          </button>
+          <button
+            className="primary"
+            disabled={!assignment || saving}
+            onClick={() =>
+              assignment &&
+              startSaving(async () => {
+                const result = await saveEvaluations({
+                  assignmentId: assignment.id,
+                  evaluations: assignment.members.map((member) => ({
+                    memberId: member.id,
+                    scores: scores[member.id] ?? [20, 20, 20, 20, 20],
+                  })),
+                });
+                setMessage(result.message);
+              })
+            }
+          >
+            {saving ? "Guardando…" : "Guardar evaluaciones"}
+          </button>
+        </div>
       </Title>
+      <div className="generator panel">
+        <label>
+          Tarea
+          <select
+            value={assignmentId}
+            onChange={(event) => {
+              const next = assignments.find(
+                (item) => item.id === event.target.value,
+              );
+              setAssignmentId(event.target.value);
+              setScores(makeScores(next));
+              setMessage("");
+            }}
+          >
+            {assignments.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.courseName} · Tarea {item.number}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
       <div className="panel table-wrap">
         <table>
           <thead>
@@ -1011,25 +1106,41 @@ function Evaluation({ members }: { members: Member[] }) {
             </tr>
           </thead>
           <tbody>
-            {members.map((m) => (
+            {assignment?.members.map((m) => (
               <tr key={m.id}>
                 <td>
                   <b>{m.shortName}</b>
                   <small>{m.carnet}</small>
                 </td>
-                {criteria.map((c) => (
+                {criteria.map((c, criterionIndex) => (
                   <td key={c}>
                     <input
                       className="score"
                       type="number"
                       min="0"
                       max="20"
-                      defaultValue="20"
+                      value={scores[m.id]?.[criterionIndex] ?? 20}
+                      aria-label={`${c} de ${m.fullName}`}
+                      onChange={(event) =>
+                        setScore(
+                          m.id,
+                          criterionIndex,
+                          Math.max(
+                            0,
+                            Math.min(20, Number(event.target.value)),
+                          ),
+                        )
+                      }
                     />
                   </td>
                 ))}
                 <td>
-                  <strong>100</strong>
+                  <strong>
+                    {(scores[m.id] ?? [20, 20, 20, 20, 20]).reduce(
+                      (total, score) => total + score,
+                      0,
+                    )}
+                  </strong>
                 </td>
               </tr>
             ))}
@@ -1039,6 +1150,7 @@ function Evaluation({ members }: { members: Member[] }) {
       <p className="notice">
         <CheckCircle2 /> La suma máxima de los criterios es 100 puntos.
       </p>
+      {message && <p className="notice">{message}</p>}
     </>
   );
 }

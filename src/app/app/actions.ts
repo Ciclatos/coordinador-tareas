@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { reportText } from "@/lib/domain";
+import { parseMemberCsv } from "@/lib/member-csv";
 
 export type FormState =
   | { ok?: boolean; message?: string; errors?: Record<string, string[]> }
@@ -324,6 +325,84 @@ export async function moveMember(memberId: string, direction: -1 | 1) {
   ]);
   revalidatePath("/app");
   return { ok: true, message: "Orden actualizado." };
+}
+
+export async function importMembersCsv(courseId: string, csv: string) {
+  const { userId } = await requireSession();
+  const id = z.string().cuid().safeParse(courseId);
+  if (!id.success || !(await ownsCourse(userId, courseId)))
+    return { ok: false, message: "No tienes acceso a este curso." };
+  let members;
+  try {
+    members = parseMemberCsv(csv);
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "CSV inválido." };
+  }
+  const existing = await prisma.courseMember.findMany({
+    where: { courseId },
+    select: { id: true, carnet: true, sortOrder: true },
+    orderBy: { sortOrder: "desc" },
+  });
+  const byCarnet = new Map(existing.map((member) => [member.carnet.toLocaleLowerCase("es"), member]));
+  let created = 0;
+  let updated = 0;
+  let nextOrder = (existing[0]?.sortOrder ?? -1) + 1;
+  await prisma.$transaction(
+    members.map((member) => {
+      const match = byCarnet.get(member.carnet.toLocaleLowerCase("es"));
+      if (match) {
+        updated++;
+        return prisma.courseMember.update({
+          where: { id: match.id },
+          data: { ...member, active: true },
+        });
+      }
+      created++;
+      return prisma.courseMember.create({
+        data: { ...member, courseId, sortOrder: nextOrder++ },
+      });
+    }),
+  );
+  revalidatePath("/app");
+  return { ok: true, message: `Importación lista: ${created} creados y ${updated} actualizados.` };
+}
+
+export async function copyMembers(sourceCourseId: string, targetCourseId: string) {
+  const { userId } = await requireSession();
+  const ids = z.object({ sourceCourseId: z.string().cuid(), targetCourseId: z.string().cuid() }).safeParse({
+    sourceCourseId,
+    targetCourseId,
+  });
+  if (!ids.success || sourceCourseId === targetCourseId)
+    return { ok: false, message: "Selecciona dos cursos distintos." };
+  const owned = await prisma.course.count({
+    where: { id: { in: [sourceCourseId, targetCourseId] }, userId },
+  });
+  if (owned !== 2) return { ok: false, message: "No tienes acceso a uno de los cursos." };
+  const [source, target] = await Promise.all([
+    prisma.courseMember.findMany({ where: { courseId: sourceCourseId, active: true }, orderBy: { sortOrder: "asc" } }),
+    prisma.courseMember.findMany({ where: { courseId: targetCourseId }, select: { carnet: true, sortOrder: true }, orderBy: { sortOrder: "desc" } }),
+  ]);
+  const existing = new Set(target.map((member) => member.carnet.toLocaleLowerCase("es")));
+  const additions = source.filter((member) => !existing.has(member.carnet.toLocaleLowerCase("es")));
+  let nextOrder = (target[0]?.sortOrder ?? -1) + 1;
+  if (additions.length)
+    await prisma.courseMember.createMany({
+      data: additions.map(({ fullName, shortName, carnet, email, phone }) => ({
+        courseId: targetCourseId,
+        fullName,
+        shortName,
+        carnet,
+        email,
+        phone,
+        sortOrder: nextOrder++,
+      })),
+    });
+  revalidatePath("/app");
+  return {
+    ok: true,
+    message: `${additions.length} integrantes copiados; ${source.length - additions.length} ya existían.`,
+  };
 }
 
 export async function saveDistribution(

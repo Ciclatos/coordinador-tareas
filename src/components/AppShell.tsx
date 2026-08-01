@@ -36,6 +36,8 @@ import { logout } from "@/app/(auth)/actions";
 import type { DashboardData } from "@/data/dashboard";
 import { EntityModal, type EditableEntity } from "@/components/EntityModal";
 import {
+  copyMembers,
+  importMembersCsv,
   moveMember,
   saveDistribution,
   saveEvaluations,
@@ -384,6 +386,7 @@ export default function AppShell({
             <Members
               totals={totals}
               courseId={currentCourse?.id}
+              courses={initialData}
               onCreate={() => setModal({ mode: "member" })}
               hasCourses={initialData.length > 0}
               onEdit={(member) => setModal({ mode: "member", initial: member })}
@@ -753,6 +756,7 @@ function Members({
   onCreate,
   hasCourses,
   courseId,
+  courses,
   onEdit,
   onAction,
   busy,
@@ -761,17 +765,86 @@ function Members({
   onCreate: () => void;
   hasCourses: boolean;
   courseId?: string;
+  courses: DashboardData;
   onEdit: (member: EditableEntity) => void;
   onAction: (action: () => Promise<{ ok: boolean; message: string }>) => void;
   busy: boolean;
 }) {
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [csv, setCsv] = useState("");
+  const [sourceCourseId, setSourceCourseId] = useState("");
+  const [targetCourseId, setTargetCourseId] = useState(courseId ?? "");
   return (
     <>
       <Title eyebrow="Organización" title="Integrantes del grupo">
-        <button className="primary" onClick={onCreate} disabled={!hasCourses}>
-          <Plus size={17} /> Agregar integrante
-        </button>
+        <div className="row-actions">
+          <button className="outline" onClick={() => setToolsOpen((open) => !open)} disabled={!hasCourses}>
+            {toolsOpen ? "Cerrar herramientas" : "Importar o copiar"}
+          </button>
+          <button className="primary" onClick={onCreate} disabled={!hasCourses}>
+            <Plus size={17} /> Agregar integrante
+          </button>
+        </div>
       </Title>
+      {toolsOpen && (
+        <div className="panel member-tools">
+          <section>
+            <h3>Importar CSV</h3>
+            <p>Encabezados: <code>nombre,carnet,nombre_corto,correo</code>. Máximo 200 filas.</p>
+            <label>
+              Curso destino
+              <select value={targetCourseId} onChange={(event) => setTargetCourseId(event.target.value)}>
+                <option value="">Selecciona un curso</option>
+                {courses.filter((course) => course.active).map((course) => (
+                  <option key={course.id} value={course.id}>{course.name}</option>
+                ))}
+              </select>
+            </label>
+            <textarea
+              value={csv}
+              onChange={(event) => setCsv(event.target.value)}
+              placeholder={"nombre,carnet,nombre_corto,correo\nAna Pérez,2026-001,Ana,ana@example.com"}
+              rows={5}
+            />
+            <button
+              className="primary"
+              disabled={busy || !targetCourseId || !csv.trim()}
+              onClick={() => onAction(() => importMembersCsv(targetCourseId, csv))}
+            >
+              Importar integrantes
+            </button>
+          </section>
+          <section>
+            <h3>Copiar desde otro curso</h3>
+            <p>Copia integrantes activos y omite carnés que ya existan en el destino.</p>
+            <label>
+              Curso origen
+              <select value={sourceCourseId} onChange={(event) => setSourceCourseId(event.target.value)}>
+                <option value="">Selecciona el origen</option>
+                {courses.map((course) => (
+                  <option key={course.id} value={course.id}>{course.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Curso destino
+              <select value={targetCourseId} onChange={(event) => setTargetCourseId(event.target.value)}>
+                <option value="">Selecciona el destino</option>
+                {courses.filter((course) => course.active).map((course) => (
+                  <option key={course.id} value={course.id}>{course.name}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              className="primary"
+              disabled={busy || !sourceCourseId || !targetCourseId || sourceCourseId === targetCourseId}
+              onClick={() => onAction(() => copyMembers(sourceCourseId, targetCourseId))}
+            >
+              Copiar integrantes
+            </button>
+          </section>
+        </div>
+      )}
       {totals.length === 0 ? (
         <div className="empty panel">
           <Users />

@@ -575,6 +575,44 @@ p {
 .table-wrap {
   overflow: auto;
 }
+.member-tools {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  padding: 22px;
+  margin-bottom: 18px;
+}
+.member-tools section + section {
+  border-left: 1px solid var(--line);
+  padding-left: 24px;
+}
+.member-tools h3 {
+  margin: 0 0 6px;
+}
+.member-tools p {
+  font-size: 12px;
+  margin-bottom: 14px;
+}
+.member-tools label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+.member-tools select,
+.member-tools textarea {
+  width: 100%;
+  border: 1px solid #ccd9d4;
+  border-radius: 7px;
+  padding: 9px 10px;
+  font: inherit;
+  background: white;
+}
+.member-tools textarea {
+  resize: vertical;
+  margin-bottom: 12px;
+}
 table {
   border-collapse: collapse;
   width: 100%;
@@ -639,6 +677,17 @@ th small {
 .status.gray {
   background: #edf0ef;
   color: #68746f;
+}
+@media (max-width: 760px) {
+  .member-tools {
+    grid-template-columns: 1fr;
+  }
+  .member-tools section + section {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    padding-left: 0;
+    padding-top: 20px;
+  }
 }
 .generator {
   padding: 17px;

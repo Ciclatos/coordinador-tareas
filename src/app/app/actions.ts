@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
+import { reportText } from "@/lib/domain";
 
 export type FormState =
   | { ok?: boolean; message?: string; errors?: Record<string, string[]> }
@@ -74,6 +75,10 @@ const defaultCriteria = [
   "Comunicación",
   "Ejercicios completos",
 ];
+const reportSchema = z.object({
+  assignmentId: z.string().cuid(),
+  body: z.string().trim().min(50).max(10000).optional(),
+});
 
 async function ownsCourse(userId: string, courseId: string) {
   return Boolean(
@@ -328,4 +333,75 @@ export async function saveEvaluations(
   });
   revalidatePath("/app");
   return { ok: true, message: "Evaluaciones guardadas correctamente." };
+}
+
+export async function saveWeeklyReport(
+  input: z.infer<typeof reportSchema>,
+): Promise<{ ok: boolean; message: string; body?: string }> {
+  const { userId } = await requireSession();
+  const parsed = reportSchema.safeParse(input);
+  if (!parsed.success)
+    return { ok: false, message: "El reporte contiene datos inválidos." };
+  const assignment = await prisma.assignment.findFirst({
+    where: { id: parsed.data.assignmentId, course: { userId } },
+    select: {
+      id: true,
+      sections: { orderBy: { sortOrder: "asc" }, select: { name: true } },
+      course: {
+        select: {
+          members: {
+            where: { active: true },
+            select: {
+              id: true,
+              fullName: true,
+              assignments: {
+                where: { assignmentId: parsed.data.assignmentId },
+                select: { id: true },
+              },
+            },
+          },
+        },
+      },
+      submissions: { select: { late: true } },
+    },
+  });
+  if (!assignment) return { ok: false, message: "No tienes acceso a esta tarea." };
+  const memberCounts = assignment.course.members.map((member) => ({
+    name: member.fullName,
+    count: member.assignments.length,
+  }));
+  const minimum = memberCounts.length
+    ? Math.min(...memberCounts.map((member) => member.count))
+    : 0;
+  const extras = memberCounts
+    .filter((member) => member.count > minimum)
+    .map((member) => member.name);
+  const pending = Math.max(
+    0,
+    assignment.course.members.length - assignment.submissions.length,
+  );
+  const late = assignment.submissions.filter((submission) => submission.late).length;
+  const body =
+    parsed.data.body ??
+    reportText(
+      assignment.sections.map((section) => section.name),
+      pending,
+      late,
+      extras,
+    );
+  await prisma.report.create({
+    data: {
+      assignmentId: assignment.id,
+      body,
+      generatorVersion: parsed.data.body ? "edited-v1" : "template-v1",
+    },
+  });
+  revalidatePath("/app");
+  return {
+    ok: true,
+    body,
+    message: parsed.data.body
+      ? "Reporte editado guardado."
+      : "Reporte generado con los datos actuales.",
+  };
 }

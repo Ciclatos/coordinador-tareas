@@ -10,6 +10,13 @@ export async function getDashboardData(userId: string) {
       name: true,
       code: true,
       teacher: true,
+      degree: true,
+      faculty: true,
+      university: true,
+      campus: true,
+      shift: true,
+      cycle: true,
+      semester: true,
       section: true,
       groupNumber: true,
       academicYear: true,
@@ -36,6 +43,9 @@ export async function getDashboardData(userId: string) {
           weekNumber: true,
           title: true,
           topic: true,
+          weekStart: true,
+          weekEnd: true,
+          instructions: true,
           dueAt: true,
           status: true,
           sections: {
@@ -45,7 +55,14 @@ export async function getDashboardData(userId: string) {
               name: true,
               exercises: {
                 orderBy: { sortOrder: "asc" },
-                select: { id: true, label: true },
+                select: {
+                  id: true,
+                  label: true,
+                  weight: true,
+                  allocations: {
+                    select: { memberId: true, locked: true },
+                  },
+                },
               },
             },
           },
@@ -91,6 +108,11 @@ export async function getDashboardData(userId: string) {
               },
             },
           },
+          reports: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: { id: true, body: true, generatorVersion: true, createdAt: true },
+          },
           _count: { select: { sections: true, submissions: true } },
         },
       },
@@ -101,6 +123,12 @@ export async function getDashboardData(userId: string) {
     assignments: course.assignments.map((assignment) => ({
       ...assignment,
       dueAt: assignment.dueAt.toISOString(),
+      weekStart: assignment.weekStart.toISOString(),
+      weekEnd: assignment.weekEnd.toISOString(),
+      reports: assignment.reports.map((report) => ({
+        ...report,
+        createdAt: report.createdAt.toISOString(),
+      })),
       submissions: assignment.submissions.map((submission) => ({
         ...submission,
         receivedAt: submission.receivedAt?.toISOString() ?? null,

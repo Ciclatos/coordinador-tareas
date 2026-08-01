@@ -17,8 +17,8 @@ Aplicación web en español para coordinar tareas grupales universitarias: defin
 - Matriz editable para mover ejercicios entre integrantes.
 - Entregas PDF, JPG, PNG y WEBP en Vercel Blob privado, con validación binaria, SHA-256, versiones y acceso autenticado.
 - Evaluación rápida con cinco criterios de 20 puntos.
-- Reporte determinista en español, sin depender de una API de IA.
-- PDF final mediante `pdf-lib`: portada, desempeño, carátula, integrantes, entregas y numeración de páginas.
+- Reporte determinista persistido, regenerable desde datos actuales y editable, sin depender de una API de IA.
+- PDF final mediante `pdf-lib`: portada, desempeño, evaluación detallada, resumen, carátula con logo, integrantes, entregas y numeración.
 - Autenticación por correo y contraseña, sesiones firmadas y persistencia multiusuario en Lakebase Postgres (Neon) mediante Prisma.
 
 ## Arquitectura
@@ -51,11 +51,16 @@ El almacén debe permanecer privado. La aplicación entrega cada archivo mediant
 Los documentos originales se mantienen fuera de Git mediante `references/*`. Consulta [references/README.md](references/README.md) para los nombres admitidos. Para renderizar la referencia página por página:
 
 ```bash
-mkdir -p tmp/pdfs
-pdftoppm -png references/tarea-semana-5-ejemplo.pdf tmp/pdfs/referencia
+npm run pdf:inspect-reference
 ```
 
 El PDF final sigue el orden: portada del reporte, desempeño y evaluación, carátula, integrantes, desarrollo y anexos.
+
+La validación reproducible genera un documento carta de 31 páginas con seis integrantes, una entrega PDF de 24 páginas y una imagen; después renderiza todas las páginas y comprueba estructura, tamaño y encabezados:
+
+```bash
+npm run pdf:qa
+```
 
 ## Calidad
 

@@ -745,6 +745,24 @@ th small {
   border-radius: 6px;
   text-align: center;
 }
+.report-editor {
+  padding: 22px;
+  margin-bottom: 20px;
+}
+.report-editor h3,
+.report-editor p {
+  margin-top: 0;
+}
+.report-editor textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid #ccd8d4;
+  border-radius: 8px;
+  padding: 12px;
+  margin: 12px 0;
+  line-height: 1.55;
+  font: inherit;
+}
 .builder {
   display: grid;
   grid-template-columns: 1.15fr 0.85fr;

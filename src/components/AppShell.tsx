@@ -22,15 +22,20 @@ import {
   buildExercises,
   distribute,
   generateLabels,
+  reportText,
   type Allocation,
   type Exercise,
   type Member,
 } from "@/lib/domain";
-import { createAssignmentPdf } from "@/lib/pdf";
+import { createAssignmentPdf, type StoredPdfSource } from "@/lib/pdf";
 import { logout } from "@/app/(auth)/actions";
 import type { DashboardData } from "@/data/dashboard";
 import { EntityModal } from "@/components/EntityModal";
-import { saveDistribution, saveEvaluations } from "@/app/app/actions";
+import {
+  saveDistribution,
+  saveEvaluations,
+  saveWeeklyReport,
+} from "@/app/app/actions";
 import { submissionPath } from "@/lib/submission-path";
 
 type View =
@@ -67,7 +72,15 @@ export default function AppShell({
   },
   initialData = [],
 }: {
-  currentUser?: { name: string; systemName: string };
+  currentUser?: {
+    name: string;
+    systemName: string;
+    university?: string | null;
+    faculty?: string | null;
+    campus?: string | null;
+    shift?: string | null;
+    degree?: string | null;
+  };
   initialData?: DashboardData;
 }) {
   const members = useMemo(
@@ -97,8 +110,31 @@ export default function AppShell({
     "manual" | "range" | "odd" | "even" | "multiple"
   >("multiple");
   const [input, setInput] = useState("5 al 25");
-  const [files, setFiles] = useState<File[]>([]);
   const [toast, setToast] = useState("");
+  const currentCourse = initialData[0];
+  const currentAssignment = currentCourse?.assignments[0];
+  const defaultReport = currentAssignment
+    ? reportText(
+        currentAssignment.sections.map((section) => section.name),
+        Math.max(0, currentCourse.members.length - currentAssignment.submissions.length),
+        currentAssignment.submissions.filter((submission) => submission.late).length,
+        [],
+      )
+    : "";
+  const [reportBody, setReportBody] = useState(
+    currentAssignment?.reports[0]?.body ?? defaultReport,
+  );
+  const storedPdfFiles: StoredPdfSource[] =
+    currentAssignment?.submissions.flatMap((submission) =>
+      submission.versions.flatMap((version) =>
+        version.files.map((file) => ({
+          id: file.id,
+          name: file.originalName,
+          mimeType: file.mimeType,
+          url: `/api/files/${file.id}`,
+        })),
+      ),
+    ) ?? [];
   const currentAssignmentId = initialData[0]?.assignments[0]?.id;
   const totals = useMemo(
     () =>
@@ -128,18 +164,65 @@ export default function AppShell({
     }
   };
   const download = async () => {
+    if (!currentCourse || !currentAssignment) {
+      notify("Crea una tarea antes de generar el PDF.");
+      return;
+    }
     notify("Generando documento…");
+    const persistedExercises: Exercise[] = currentAssignment.sections.flatMap(
+      (section) =>
+        section.exercises.map((exercise) => ({
+          id: exercise.id,
+          sectionId: section.id,
+          section: section.name,
+          label: exercise.label,
+          weight: exercise.weight,
+        })),
+    );
+    const persistedAllocations: Allocation[] = currentAssignment.sections.flatMap(
+      (section) =>
+        section.exercises.flatMap((exercise) =>
+          exercise.allocations.map((allocation) => ({
+            exerciseId: exercise.id,
+            memberId: allocation.memberId,
+            locked: allocation.locked,
+          })),
+        ),
+    );
     const bytes = await createAssignmentPdf({
+      systemName: currentUser.systemName,
+      course: {
+        ...currentCourse,
+        university: currentCourse.university || currentUser.university,
+        faculty: currentCourse.faculty || currentUser.faculty,
+        campus: currentCourse.campus || currentUser.campus,
+        shift: currentCourse.shift || currentUser.shift,
+        degree: currentCourse.degree || currentUser.degree,
+      },
+      assignment: currentAssignment,
       members,
-      exercises,
-      allocations,
-      files,
+      exercises: persistedExercises.length ? persistedExercises : exercises,
+      allocations: persistedAllocations.length ? persistedAllocations : allocations,
+      evaluations: currentAssignment.evaluations.map((evaluation) => ({
+        memberId: evaluation.memberId,
+        total: evaluation.total,
+        scores: evaluation.scores.map((score) => ({
+          name: score.criterion.name,
+          maxScore: score.criterion.maxScore,
+          score: score.score,
+        })),
+      })),
+      reportBody,
+      files: [],
+      storedFiles: storedPdfFiles,
     });
     const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "tarea-semana-5.pdf";
+    a.download = `tarea-${currentAssignment.number}-${currentCourse.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")}.pdf`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     notify("PDF final generado correctamente");
@@ -251,15 +334,17 @@ export default function AppShell({
               assignmentId={currentAssignmentId}
             />
           )}{" "}
-          {view === "Entregas" && (
-            <Submissions
-              setFiles={setFiles}
-              courses={initialData}
-            />
-          )}{" "}
+          {view === "Entregas" && <Submissions courses={initialData} />}{" "}
           {view === "Evaluación" && <Evaluation courses={initialData} />}{" "}
           {view === "PDF final" && (
-            <PdfBuilder files={files} download={download} members={members} />
+            <PdfBuilder
+              storedFiles={storedPdfFiles}
+              download={download}
+              members={members}
+              assignmentId={currentAssignmentId}
+              reportBody={reportBody}
+              setReportBody={setReportBody}
+            />
           )}{" "}
           {view === "Configuración" && <SettingsView />}
         </section>
@@ -780,13 +865,7 @@ function generateSafe(
     return [];
   }
 }
-function Submissions({
-  setFiles,
-  courses,
-}: {
-  setFiles: React.Dispatch<React.SetStateAction<File[]>>;
-  courses: DashboardData;
-}) {
+function Submissions({ courses }: { courses: DashboardData }) {
   const router = useRouter();
   const assignments = useMemo(
     () =>
@@ -862,7 +941,6 @@ function Submissions({
       });
       const result = (await response.json()) as { ok?: boolean; error?: string; version?: number };
       if (!response.ok || !result.ok) throw new Error(result.error || "No se pudo registrar la entrega.");
-      setFiles((current) => [...current, ...pending]);
       setPending([]);
       setProgress(100);
       setMessage(`Entrega guardada como versión ${result.version}.`);
@@ -1155,28 +1233,86 @@ function Evaluation({ courses }: { courses: DashboardData }) {
   );
 }
 function PdfBuilder({
-  files,
+  storedFiles,
   download,
   members,
+  assignmentId,
+  reportBody,
+  setReportBody,
 }: {
-  files: File[];
+  storedFiles: StoredPdfSource[];
   download: () => void;
   members: Member[];
+  assignmentId?: string;
+  reportBody: string;
+  setReportBody: (body: string) => void;
 }) {
+  const [savingReport, startSavingReport] = useTransition();
+  const [reportMessage, setReportMessage] = useState("");
   const blocks = [
     "Portada del reporte",
-    "Desempeño grupal y tablas",
+    "Desempeño grupal",
+    "Evaluación detallada",
+    "Resumen de notas",
     "Carátula oficial",
     "Integrantes del grupo",
-    ...files.map((f) => f.name),
+    ...storedFiles.map((file) => file.name),
   ];
   return (
     <>
       <Title eyebrow="Constructor final" title="Compilar PDF">
-        <button className="primary" onClick={download}>
+        <button className="primary" onClick={download} disabled={!assignmentId}>
           <FileDown size={17} /> Generar y descargar
         </button>
       </Title>
+      <div className="panel report-editor">
+        <div>
+          <h3>Reporte de desempeño semanal</h3>
+          <p>
+            Genera el texto con entregas, atrasos y distribución actuales; luego
+            puedes editarlo antes de compilar.
+          </p>
+        </div>
+        <textarea
+          aria-label="Texto del reporte semanal"
+          value={reportBody}
+          onChange={(event) => setReportBody(event.target.value)}
+          rows={7}
+        />
+        <div className="title-actions">
+          <button
+            className="outline"
+            disabled={!assignmentId || savingReport}
+            onClick={() =>
+              assignmentId &&
+              startSavingReport(async () => {
+                const result = await saveWeeklyReport({ assignmentId });
+                if (result.body) setReportBody(result.body);
+                setReportMessage(result.message);
+              })
+            }
+          >
+            Generar desde datos actuales
+          </button>
+          <button
+            className="primary"
+            disabled={!assignmentId || reportBody.trim().length < 50 || savingReport}
+            onClick={() =>
+              assignmentId &&
+              startSavingReport(async () => {
+                const result = await saveWeeklyReport({
+                  assignmentId,
+                  body: reportBody,
+                });
+                setReportMessage(result.message);
+              })
+            }
+          >
+            {savingReport ? "Guardando…" : "Guardar texto editado"}
+          </button>
+        </div>
+        {reportMessage && <p className="notice">{reportMessage}</p>}
+      </div>
       <div className="builder">
         <div className="panel">
           <h3>Orden de páginas</h3>
@@ -1187,7 +1323,7 @@ function PdfBuilder({
               <span>
                 <strong>{b}</strong>
                 <small>
-                  {i < 4
+                  {i < 6
                     ? "Página administrativa generada"
                     : "Entrega recibida"}
                 </small>
@@ -1208,7 +1344,7 @@ function PdfBuilder({
             ))}
           </div>
           <small>
-            {4 + files.length} páginas estimadas · Carta · Calidad alta
+            {6 + storedFiles.length} páginas estimadas · Carta · Calidad alta
           </small>
         </div>
       </div>

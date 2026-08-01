@@ -1,0 +1,47 @@
+import { existsSync } from "node:fs";
+import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+
+const input = resolve(process.argv[2] || "output/pdf/qa-30-pages.pdf");
+const minimumPages = Number(process.argv[3] || 1);
+const renderDirectory = resolve("tmp/pdfs/qa-render");
+await rm(renderDirectory, { recursive: true, force: true });
+await mkdir(renderDirectory, { recursive: true });
+function run(command, args) {
+  const result = spawnSync(command, args, { encoding: "utf8" });
+  if (result.status !== 0) throw new Error(result.stderr || `${command} falló`);
+  return result.stdout;
+}
+const pdfinfoExecutable = spawnSync("which", ["pdfinfo"], { encoding: "utf8" }).stdout.trim();
+const bundledPython = resolve(dirname(pdfinfoExecutable), "../../python/bin/python3");
+const python = existsSync(bundledPython) ? bundledPython : "python3";
+const info = run("pdfinfo", [input]);
+const pages = Number(info.match(/^Pages:\s+(\d+)/m)?.[1] || 0);
+const pageSize = info.match(/^Page size:\s+(.+)$/m)?.[1] || "desconocido";
+if (pages < minimumPages) throw new Error(`Se esperaban al menos ${minimumPages} páginas; se encontraron ${pages}.`);
+run("pdftoppm", ["-png", "-r", "110", input, resolve(renderDirectory, "pagina")]);
+const rendered = (await readdir(renderDirectory)).filter(
+  (name) => name.endsWith(".png") && !name.startsWith("._"),
+);
+if (rendered.length !== pages) throw new Error(`Se renderizaron ${rendered.length} de ${pages} páginas.`);
+for (const name of rendered) {
+  if ((await stat(resolve(renderDirectory, name))).size < 500)
+    throw new Error(`${name} parece estar vacío.`);
+}
+const text = run(python, [
+  "-c",
+  "from pypdf import PdfReader; import sys; print('\\n'.join((p.extract_text() or '') for p in PdfReader(sys.argv[1]).pages))",
+  input,
+]);
+for (const heading of [
+  "REPORTE DE DESEMPEÑO SEMANAL",
+  "DESEMPEÑO GRUPAL",
+  "EVALUACIÓN DETALLADA",
+  "RESUMEN DE NOTAS",
+  "CARÁTULA OFICIAL",
+  "INTEGRANTES DEL GRUPO",
+]) {
+  if (!text.includes(heading)) throw new Error(`Falta el encabezado: ${heading}`);
+}
+console.log(JSON.stringify({ input, pages, pageSize, rendered: rendered.length }, null, 2));

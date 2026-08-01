@@ -91,6 +91,7 @@ export async function getDashboardData(userId: string) {
                       sizeBytes: true,
                       rotation: true,
                       pageCount: true,
+                      exerciseId: true,
                     },
                   },
                 },

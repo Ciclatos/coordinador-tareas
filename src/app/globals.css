@@ -969,6 +969,47 @@ th small {
 .file-list {
   margin-top: 16px;
 }
+.coverage-panel {
+  padding: 18px;
+  margin: 16px 0;
+}
+.coverage-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(90px, 1fr));
+  gap: 8px;
+  overflow-x: auto;
+}
+.coverage-grid > div {
+  min-width: 90px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #f6f8f7;
+}
+.coverage-grid strong,
+.coverage-grid span {
+  display: block;
+}
+.coverage-grid strong {
+  color: var(--green);
+  font-family: Georgia, serif;
+  font-size: 24px;
+}
+.coverage-grid span {
+  margin-top: 4px;
+  color: #66766f;
+  font-size: 10px;
+}
+.coverage-details {
+  margin-top: 12px;
+  border-left: 3px solid #d69b2d;
+  padding: 4px 12px;
+  color: #5b4b2d;
+  font-size: 12px;
+}
+.coverage-details p {
+  margin: 5px 0;
+}
 .file-list > div:not(.empty) {
   padding: 15px 19px;
   display: flex;

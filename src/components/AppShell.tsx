@@ -1597,6 +1597,40 @@ function Submissions({ courses }: { courses: DashboardData }) {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState("");
+  const expectedExercises =
+    assignment?.sections.flatMap((section) =>
+      section.exercises.map((exercise) => ({ ...exercise, sectionName: section.name })),
+    ) ?? [];
+  const deliveredFiles =
+    assignment?.submissions.flatMap((submission) =>
+      submission.versions.flatMap((version) =>
+        version.files.map((file) => ({ ...file, memberId: submission.member.id })),
+      ),
+    ) ?? [];
+  const exerciseFileCounts = new Map<string, number>();
+  deliveredFiles.forEach((file) => {
+    if (file.exerciseId)
+      exerciseFileCounts.set(file.exerciseId, (exerciseFileCounts.get(file.exerciseId) ?? 0) + 1);
+  });
+  const receivedExerciseIds = new Set(exerciseFileCounts.keys());
+  const pendingExercises = expectedExercises.filter(
+    (exercise) => !receivedExerciseIds.has(exercise.id),
+  );
+  const duplicateExercises = expectedExercises.filter(
+    (exercise) => (exerciseFileCounts.get(exercise.id) ?? 0) > 1,
+  );
+  const wrongOwnerFiles = deliveredFiles.filter((file) => {
+    if (!file.exerciseId) return false;
+    const exercise = expectedExercises.find((item) => item.id === file.exerciseId);
+    return exercise?.allocations[0]?.memberId && exercise.allocations[0].memberId !== file.memberId;
+  });
+  const excludedIds = new Set(assignment?.exclusions.map((item) => item.memberId) ?? []);
+  const submittedMemberIds = new Set(assignment?.submissions.map((item) => item.member.id) ?? []);
+  const pendingMembers =
+    assignment?.members.filter(
+      (member) => member.active && !excludedIds.has(member.id) && !submittedMemberIds.has(member.id),
+    ) ?? [];
+  const lateCount = assignment?.submissions.filter((submission) => submission.late).length ?? 0;
   const chooseFiles = (incoming: File[]) => {
     const allowed = new Set([
       "application/pdf",
@@ -1739,6 +1773,45 @@ function Submissions({ courses }: { courses: DashboardData }) {
         </div>
       )}
       {message && <div className="notice">{message}</div>}
+      {assignment && (
+        <div className="panel coverage-panel">
+          <div className="panel-head">
+            <div>
+              <h3>Validación de cobertura por metadatos</h3>
+              <p>No se interpreta el contenido matemático; se usa el ejercicio asociado por el coordinador.</p>
+            </div>
+          </div>
+          <div className="coverage-grid">
+            {[
+              ["Esperados", expectedExercises.length],
+              ["Recibidos", receivedExerciseIds.size],
+              ["Pendientes", pendingExercises.length],
+              ["Duplicados", duplicateExercises.length],
+              ["Persona distinta", wrongOwnerFiles.length],
+              ["Integrantes pendientes", pendingMembers.length],
+              ["Entregas tardías", lateCount],
+            ].map(([label, value]) => (
+              <div key={String(label)}>
+                <strong>{value}</strong>
+                <span>{label}</span>
+              </div>
+            ))}
+          </div>
+          {(pendingExercises.length > 0 || duplicateExercises.length > 0 || wrongOwnerFiles.length > 0) && (
+            <div className="coverage-details">
+              {pendingExercises.length > 0 && (
+                <p><b>Pendientes:</b> {pendingExercises.map((exercise) => `${exercise.sectionName} ${exercise.label}`).join(", ")}</p>
+              )}
+              {duplicateExercises.length > 0 && (
+                <p><b>Duplicados:</b> {duplicateExercises.map((exercise) => `${exercise.sectionName} ${exercise.label}`).join(", ")}</p>
+              )}
+              {wrongOwnerFiles.length > 0 && (
+                <p><b>Asignados a otra persona:</b> {wrongOwnerFiles.map((file) => file.originalName).join(", ")}</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       <div className="panel file-list">
         {!assignment || assignment.submissions.length === 0 ? (
           <div className="empty">

@@ -1,27 +1,332 @@
-generator client { provider = "prisma-client-js" }
-datasource db { provider = "postgresql" url = env("DATABASE_URL") directUrl = env("DIRECT_URL") }
+generator client {
+  provider = "prisma-client-js"
+}
 
-enum AssignmentStatus { DRAFT DISTRIBUTED RECEIVING REVIEW FINALIZED ARCHIVED }
-enum SubmissionStatus { PENDING SUBMITTED LATE REVIEWING NEEDS_CORRECTION CORRECTED APPROVED REJECTED }
-enum FileKind { PDF IMAGE }
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
 
-model User { id String @id @default(cuid()) email String @unique passwordHash String? createdAt DateTime @default(now()) profile UserProfile? courses Course[] }
-model UserProfile { id String @id @default(cuid()) userId String @unique user User @relation(fields:[userId],references:[id],onDelete:Cascade) name String university String? faculty String? campus String? shift String? degree String? timezone String @default("America/Guatemala") systemName String @default("Coordinador de Tareas") documentPreferences Json? logoPath String? }
-model Course { id String @id @default(cuid()) userId String user User @relation(fields:[userId],references:[id],onDelete:Cascade) name String code String? teacher String? degree String? faculty String? university String? campus String? shift String? cycle String? semester String? section String? groupNumber String? academicYear Int? active Boolean @default(true) logoPath String? defaultPdfOrder Json? members CourseMember[] assignments Assignment[] templates EvaluationTemplate[] covers CoverTemplate[] @@index([userId,active]) }
-model CourseMember { id String @id @default(cuid()) courseId String course Course @relation(fields:[courseId],references:[id],onDelete:Cascade) fullName String carnet String shortName String email String? phone String? active Boolean @default(true) sortOrder Int @default(0) workloadBalance Float @default(0) assignments ExerciseAssignment[] submissions Submission[] evaluations MemberEvaluation[] snapshots GroupWorkloadSnapshot[] @@unique([courseId,carnet]) @@index([courseId,active]) }
-model Assignment { id String @id @default(cuid()) courseId String course Course @relation(fields:[courseId],references:[id],onDelete:Cascade) number Int weekNumber Int title String topic String? weekStart DateTime weekEnd DateTime dueAt DateTime instructions String? status AssignmentStatus @default(DRAFT) coordinatorNotes String? pdfOrder Json? createdAt DateTime @default(now()) updatedAt DateTime @updatedAt sections AssignmentSection[] allocations ExerciseAssignment[] submissions Submission[] evaluations MemberEvaluation[] reports Report[] pdfBuilds PdfBuild[] snapshots GroupWorkloadSnapshot[] @@unique([courseId,number]) @@index([courseId,status,dueAt]) }
-model AssignmentSection { id String @id @default(cuid()) assignmentId String assignment Assignment @relation(fields:[assignmentId],references:[id],onDelete:Cascade) name String title String? sortOrder Int rule Json? notes String? defaultWeight Float? exercises Exercise[] @@unique([assignmentId,name]) @@index([assignmentId,sortOrder]) }
-model Exercise { id String @id @default(cuid()) sectionId String section AssignmentSection @relation(fields:[sectionId],references:[id],onDelete:Cascade) label String sortOrder Int weight Float @default(1) allocations ExerciseAssignment[] submissionFiles SubmissionFile[] @@unique([sectionId,label]) }
-model ExerciseAssignment { id String @id @default(cuid()) assignmentId String assignment Assignment @relation(fields:[assignmentId],references:[id],onDelete:Cascade) exerciseId String exercise Exercise @relation(fields:[exerciseId],references:[id],onDelete:Cascade) memberId String member CourseMember @relation(fields:[memberId],references:[id]) locked Boolean @default(false) seed String? @@unique([assignmentId,exerciseId]) @@index([assignmentId,memberId]) }
-model Submission { id String @id @default(cuid()) assignmentId String assignment Assignment @relation(fields:[assignmentId],references:[id],onDelete:Cascade) memberId String member CourseMember @relation(fields:[memberId],references:[id]) status SubmissionStatus @default(PENDING) receivedAt DateTime? late Boolean @default(false) comments String? versions SubmissionVersion[] @@index([assignmentId,status]) }
-model SubmissionVersion { id String @id @default(cuid()) submissionId String submission Submission @relation(fields:[submissionId],references:[id],onDelete:Cascade) version Int createdAt DateTime @default(now()) files SubmissionFile[] @@unique([submissionId,version]) }
-model SubmissionFile { id String @id @default(cuid()) versionId String version SubmissionVersion @relation(fields:[versionId],references:[id],onDelete:Cascade) exerciseId String? exercise Exercise? @relation(fields:[exerciseId],references:[id]) storageKey String mimeType String kind FileKind sizeBytes Int pageCount Int? sortOrder Int @default(0) rotation Int @default(0) sha256 String @@index([versionId,sortOrder]) }
-model EvaluationTemplate { id String @id @default(cuid()) courseId String course Course @relation(fields:[courseId],references:[id],onDelete:Cascade) name String active Boolean @default(true) criteria EvaluationCriterion[] }
-model EvaluationCriterion { id String @id @default(cuid()) templateId String template EvaluationTemplate @relation(fields:[templateId],references:[id],onDelete:Cascade) name String maxScore Float sortOrder Int scores CriterionScore[] }
-model MemberEvaluation { id String @id @default(cuid()) assignmentId String assignment Assignment @relation(fields:[assignmentId],references:[id],onDelete:Cascade) memberId String member CourseMember @relation(fields:[memberId],references:[id]) total Float comments String? scores CriterionScore[] @@unique([assignmentId,memberId]) }
-model CriterionScore { id String @id @default(cuid()) evaluationId String evaluation MemberEvaluation @relation(fields:[evaluationId],references:[id],onDelete:Cascade) criterionId String criterion EvaluationCriterion @relation(fields:[criterionId],references:[id]) score Float reason String? @@unique([evaluationId,criterionId]) }
-model Report { id String @id @default(cuid()) assignmentId String assignment Assignment @relation(fields:[assignmentId],references:[id],onDelete:Cascade) body String generatorVersion String createdAt DateTime @default(now()) }
-model CoverTemplate { id String @id @default(cuid()) courseId String course Course @relation(fields:[courseId],references:[id],onDelete:Cascade) name String storageKey String? coordinates Json? gradingTable Json }
-model PdfBuild { id String @id @default(cuid()) assignmentId String assignment Assignment @relation(fields:[assignmentId],references:[id],onDelete:Cascade) version Int status String storageKey String? sizeBytes Int? createdAt DateTime @default(now()) items PdfBuildItem[] @@unique([assignmentId,version]) }
-model PdfBuildItem { id String @id @default(cuid()) buildId String build PdfBuild @relation(fields:[buildId],references:[id],onDelete:Cascade) kind String sourceId String? sortOrder Int rotation Int @default(0) selectedPages Json? @@index([buildId,sortOrder]) }
-model GroupWorkloadSnapshot { id String @id @default(cuid()) assignmentId String assignment Assignment @relation(fields:[assignmentId],references:[id],onDelete:Cascade) memberId String member CourseMember @relation(fields:[memberId],references:[id]) exerciseCount Int totalWeight Float extraCount Int lateCount Int grade Float? sections Json createdAt DateTime @default(now()) @@unique([assignmentId,memberId]) }
+enum AssignmentStatus {
+  DRAFT
+  DISTRIBUTED
+  RECEIVING
+  REVIEW
+  FINALIZED
+  ARCHIVED
+}
+
+enum SubmissionStatus {
+  PENDING
+  SUBMITTED
+  LATE
+  REVIEWING
+  NEEDS_CORRECTION
+  CORRECTED
+  APPROVED
+  REJECTED
+}
+
+enum FileKind {
+  PDF
+  IMAGE
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  passwordHash String?
+  createdAt    DateTime     @default(now())
+  profile      UserProfile?
+  courses      Course[]
+}
+
+model UserProfile {
+  id                  String  @id @default(cuid())
+  userId              String  @unique
+  user                User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                String
+  university          String?
+  faculty             String?
+  campus              String?
+  shift               String?
+  degree              String?
+  timezone            String  @default("America/Guatemala")
+  systemName          String  @default("Coordinador de Tareas")
+  documentPreferences Json?
+  logoPath            String?
+}
+
+model Course {
+  id              String               @id @default(cuid())
+  userId          String
+  user            User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name            String
+  code            String?
+  teacher         String?
+  degree          String?
+  faculty         String?
+  university      String?
+  campus          String?
+  shift           String?
+  cycle           String?
+  semester        String?
+  section         String?
+  groupNumber     String?
+  academicYear    Int?
+  active          Boolean              @default(true)
+  logoPath        String?
+  defaultPdfOrder Json?
+  members         CourseMember[]
+  assignments     Assignment[]
+  templates       EvaluationTemplate[]
+  covers          CoverTemplate[]
+
+  @@index([userId, active])
+}
+
+model CourseMember {
+  id              String                  @id @default(cuid())
+  courseId        String
+  course          Course                  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  fullName        String
+  carnet          String
+  shortName       String
+  email           String?
+  phone           String?
+  active          Boolean                 @default(true)
+  sortOrder       Int                     @default(0)
+  workloadBalance Float                   @default(0)
+  assignments     ExerciseAssignment[]
+  submissions     Submission[]
+  evaluations     MemberEvaluation[]
+  snapshots       GroupWorkloadSnapshot[]
+
+  @@unique([courseId, carnet])
+  @@index([courseId, active])
+}
+
+model Assignment {
+  id               String                  @id @default(cuid())
+  courseId         String
+  course           Course                  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  number           Int
+  weekNumber       Int
+  title            String
+  topic            String?
+  weekStart        DateTime
+  weekEnd          DateTime
+  dueAt            DateTime
+  instructions     String?
+  status           AssignmentStatus        @default(DRAFT)
+  coordinatorNotes String?
+  pdfOrder         Json?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  sections         AssignmentSection[]
+  allocations      ExerciseAssignment[]
+  submissions      Submission[]
+  evaluations      MemberEvaluation[]
+  reports          Report[]
+  pdfBuilds        PdfBuild[]
+  snapshots        GroupWorkloadSnapshot[]
+
+  @@unique([courseId, number])
+  @@index([courseId, status, dueAt])
+}
+
+model AssignmentSection {
+  id            String     @id @default(cuid())
+  assignmentId  String
+  assignment    Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  name          String
+  title         String?
+  sortOrder     Int
+  rule          Json?
+  notes         String?
+  defaultWeight Float?
+  exercises     Exercise[]
+
+  @@unique([assignmentId, name])
+  @@index([assignmentId, sortOrder])
+}
+
+model Exercise {
+  id              String               @id @default(cuid())
+  sectionId       String
+  section         AssignmentSection    @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  label           String
+  sortOrder       Int
+  weight          Float                @default(1)
+  allocations     ExerciseAssignment[]
+  submissionFiles SubmissionFile[]
+
+  @@unique([sectionId, label])
+}
+
+model ExerciseAssignment {
+  id           String       @id @default(cuid())
+  assignmentId String
+  assignment   Assignment   @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  exerciseId   String
+  exercise     Exercise     @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  memberId     String
+  member       CourseMember @relation(fields: [memberId], references: [id])
+  locked       Boolean      @default(false)
+  seed         String?
+
+  @@unique([assignmentId, exerciseId])
+  @@index([assignmentId, memberId])
+}
+
+model Submission {
+  id           String              @id @default(cuid())
+  assignmentId String
+  assignment   Assignment          @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  memberId     String
+  member       CourseMember        @relation(fields: [memberId], references: [id])
+  status       SubmissionStatus    @default(PENDING)
+  receivedAt   DateTime?
+  late         Boolean             @default(false)
+  comments     String?
+  versions     SubmissionVersion[]
+
+  @@index([assignmentId, status])
+}
+
+model SubmissionVersion {
+  id           String           @id @default(cuid())
+  submissionId String
+  submission   Submission       @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  version      Int
+  createdAt    DateTime         @default(now())
+  files        SubmissionFile[]
+
+  @@unique([submissionId, version])
+}
+
+model SubmissionFile {
+  id         String            @id @default(cuid())
+  versionId  String
+  version    SubmissionVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  exerciseId String?
+  exercise   Exercise?         @relation(fields: [exerciseId], references: [id])
+  storageKey String
+  mimeType   String
+  kind       FileKind
+  sizeBytes  Int
+  pageCount  Int?
+  sortOrder  Int               @default(0)
+  rotation   Int               @default(0)
+  sha256     String
+
+  @@index([versionId, sortOrder])
+}
+
+model EvaluationTemplate {
+  id       String                @id @default(cuid())
+  courseId String
+  course   Course                @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  name     String
+  active   Boolean               @default(true)
+  criteria EvaluationCriterion[]
+}
+
+model EvaluationCriterion {
+  id         String             @id @default(cuid())
+  templateId String
+  template   EvaluationTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  name       String
+  maxScore   Float
+  sortOrder  Int
+  scores     CriterionScore[]
+}
+
+model MemberEvaluation {
+  id           String           @id @default(cuid())
+  assignmentId String
+  assignment   Assignment       @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  memberId     String
+  member       CourseMember     @relation(fields: [memberId], references: [id])
+  total        Float
+  comments     String?
+  scores       CriterionScore[]
+
+  @@unique([assignmentId, memberId])
+}
+
+model CriterionScore {
+  id           String              @id @default(cuid())
+  evaluationId String
+  evaluation   MemberEvaluation    @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  criterionId  String
+  criterion    EvaluationCriterion @relation(fields: [criterionId], references: [id])
+  score        Float
+  reason       String?
+
+  @@unique([evaluationId, criterionId])
+}
+
+model Report {
+  id               String     @id @default(cuid())
+  assignmentId     String
+  assignment       Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  body             String
+  generatorVersion String
+  createdAt        DateTime   @default(now())
+}
+
+model CoverTemplate {
+  id           String  @id @default(cuid())
+  courseId     String
+  course       Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  name         String
+  storageKey   String?
+  coordinates  Json?
+  gradingTable Json
+}
+
+model PdfBuild {
+  id           String         @id @default(cuid())
+  assignmentId String
+  assignment   Assignment     @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  version      Int
+  status       String
+  storageKey   String?
+  sizeBytes    Int?
+  createdAt    DateTime       @default(now())
+  items        PdfBuildItem[]
+
+  @@unique([assignmentId, version])
+}
+
+model PdfBuildItem {
+  id            String   @id @default(cuid())
+  buildId       String
+  build         PdfBuild @relation(fields: [buildId], references: [id], onDelete: Cascade)
+  kind          String
+  sourceId      String?
+  sortOrder     Int
+  rotation      Int      @default(0)
+  selectedPages Json?
+
+  @@index([buildId, sortOrder])
+}
+
+model GroupWorkloadSnapshot {
+  id            String       @id @default(cuid())
+  assignmentId  String
+  assignment    Assignment   @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  memberId      String
+  member        CourseMember @relation(fields: [memberId], references: [id])
+  exerciseCount Int
+  totalWeight   Float
+  extraCount    Int
+  lateCount     Int
+  grade         Float?
+  sections      Json
+  createdAt     DateTime     @default(now())
+
+  @@unique([assignmentId, memberId])
+}

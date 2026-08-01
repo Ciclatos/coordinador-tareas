@@ -42,6 +42,8 @@ references/*
 tmp/
 output/
 ._*
+AGENTS.md
+CLAUDE.md
 
 # vercel
 .vercel

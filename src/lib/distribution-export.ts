@@ -33,13 +33,13 @@ export function distributionByMember(
       );
       const groups = [...new Set(assigned.map((exercise) => exercise.section))].map(
         (section) =>
-          `${section}: ${assigned
+          `- Sección ${section}: ${assigned
             .filter((exercise) => exercise.section === section)
             .map((exercise) => exercise.label)
-            .join(", ")}`,
+            .join(", ")}.`,
       );
       const weight = assigned.reduce((sum, exercise) => sum + exercise.weight, 0);
-      return `${member.shortName} (${assigned.length} ejercicios, peso ${weight})\n${groups.join("\n") || "Sin ejercicios"}`;
+      return `${member.shortName}:\n${groups.join("\n") || "- Sin ejercicios."}\n- Total: ${assigned.length} ejercicio${assigned.length === 1 ? "" : "s"}.\n- Peso total: ${weight}.`;
     })
     .join("\n\n");
 }

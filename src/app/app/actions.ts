@@ -49,10 +49,25 @@ const distributionSchema = z.object({
   seed: z.string().min(1).max(100),
   mode: z.enum(["independent", "global", "hybrid", "manual"]).default("hybrid"),
   excludedMemberIds: z.array(z.string().cuid()).max(100).default([]),
+  sections: z.array(z.object({
+    localId: z.string().min(1).max(160),
+    name: z.string().trim().min(1).max(80),
+    selection: z.enum(["range", "odd", "even", "multiple", "manual"]),
+    start: z.number().int().min(0).max(100000),
+    end: z.number().int().min(0).max(100000),
+    interval: z.number().int().min(1).max(100000),
+    manualList: z.string().max(10000),
+    exclusions: z.string().max(5000),
+    inclusions: z.string().max(5000),
+    labels: z.array(z.string().trim().min(1).max(80)).min(1).max(1000),
+    defaultWeight: z.number().positive().max(100),
+    notes: z.string().trim().max(2000),
+  })).min(1).max(50),
   exercises: z
     .array(
       z.object({
         localId: z.string().min(1).max(160),
+        sectionId: z.string().min(1).max(160),
         section: z.string().min(1).max(80),
         label: z.string().min(1).max(80),
         weight: z.number().positive().max(100),
@@ -509,6 +524,19 @@ export async function saveDistribution(
   const exerciseIds = new Set(
     parsed.data.exercises.map((item) => item.localId),
   );
+  const sectionIds = new Set(parsed.data.sections.map((section) => section.localId));
+  if (
+    sectionIds.size !== parsed.data.sections.length ||
+    new Set(parsed.data.sections.map((section) => section.name.toLocaleLowerCase("es"))).size !== parsed.data.sections.length ||
+    parsed.data.sections.some((section) => new Set(section.labels).size !== section.labels.length) ||
+    parsed.data.exercises.some((exercise) => !sectionIds.has(exercise.sectionId)) ||
+    parsed.data.sections.some((section) => {
+      const actual = parsed.data.exercises.filter((exercise) => exercise.sectionId === section.localId);
+      return actual.length !== section.labels.length ||
+        actual.some((exercise) => !section.labels.includes(exercise.label) || exercise.section !== section.name);
+    })
+  )
+    return { ok: false, message: "La configuración de secciones no coincide con los ejercicios generados." };
   if (
     parsed.data.allocations.length !== exerciseIds.size ||
     new Set(parsed.data.allocations.map((item) => item.exerciseId)).size !==
@@ -524,22 +552,41 @@ export async function saveDistribution(
     await tx.exerciseAssignment.deleteMany({
       where: { assignmentId: assignment.id },
     });
+    const submissionLinks = await tx.submissionFile.findMany({
+      where: { exercise: { section: { assignmentId: assignment.id } } },
+      select: { id: true, exercise: { select: { label: true, section: { select: { name: true } } } } },
+    });
+    if (submissionLinks.length)
+      await tx.submissionFile.updateMany({
+        where: { id: { in: submissionLinks.map((file) => file.id) } },
+        data: { exerciseId: null },
+      });
     await tx.assignmentSection.deleteMany({
       where: { assignmentId: assignment.id },
     });
-    const grouped = new Map<string, typeof parsed.data.exercises>();
-    for (const item of parsed.data.exercises) {
-      grouped.set(item.section, [...(grouped.get(item.section) ?? []), item]);
-    }
     const exerciseMap = new Map<string, string>();
-    let sectionOrder = 0;
-    for (const [name, items] of grouped) {
+    const logicalExerciseMap = new Map<string, string>();
+    for (const [sectionOrder, sectionInput] of parsed.data.sections.entries()) {
+      const items = parsed.data.exercises.filter((item) => item.sectionId === sectionInput.localId);
       const section = await tx.assignmentSection.create({
         data: {
           assignmentId: assignment.id,
-          name,
-          sortOrder: sectionOrder++,
-          rule: { mode: parsed.data.mode, seed: parsed.data.seed },
+          name: sectionInput.name,
+          sortOrder: sectionOrder,
+          notes: sectionInput.notes || null,
+          defaultWeight: sectionInput.defaultWeight,
+          rule: {
+            version: 2,
+            mode: parsed.data.mode,
+            seed: parsed.data.seed,
+            selection: sectionInput.selection,
+            start: sectionInput.start,
+            end: sectionInput.end,
+            interval: sectionInput.interval,
+            manualList: sectionInput.manualList,
+            exclusions: sectionInput.exclusions,
+            inclusions: sectionInput.inclusions,
+          },
         },
       });
       for (const [sortOrder, item] of items.entries()) {
@@ -552,7 +599,15 @@ export async function saveDistribution(
           },
         });
         exerciseMap.set(item.localId, exercise.id);
+        logicalExerciseMap.set(`${sectionInput.name}\u0000${item.label}`, exercise.id);
       }
+    }
+    for (const file of submissionLinks) {
+      const replacement = file.exercise
+        ? logicalExerciseMap.get(`${file.exercise.section.name}\u0000${file.exercise.label}`)
+        : undefined;
+      if (replacement)
+        await tx.submissionFile.update({ where: { id: file.id }, data: { exerciseId: replacement } });
     }
     await tx.exerciseAssignment.createMany({
       data: parsed.data.allocations.map((item) => ({

@@ -25,7 +25,6 @@ import {
 import {
   buildExercises,
   distributeByMode,
-  generateLabels,
   reportText,
   type Allocation,
   type Exercise,
@@ -60,6 +59,19 @@ import {
   distributionSummaryTsv,
   whatsappMessage,
 } from "@/lib/distribution-export";
+import {
+  duplicateLabels,
+  emptySection,
+  generateSectionLabels,
+  sectionFromStored,
+  type SectionConfig,
+} from "@/lib/section-config";
+import {
+  createDistributionSvg,
+  distributionImageFileName,
+  svgToPng,
+  type DistributionImageOptions,
+} from "@/lib/distribution-image";
 
 type View =
   | "Resumen"
@@ -168,12 +180,15 @@ export default function AppShell({
   const [menu, setMenu] = useState(false);
   const [sectionDefs, setSectionDefs] = useState(() =>
     currentAssignment?.sections.length
-      ? currentAssignment.sections.map((section) => ({
+      ? currentAssignment.sections.map((section) => sectionFromStored({
           id: section.id,
           name: section.name,
+          rule: section.rule,
+          notes: section.notes,
+          defaultWeight: section.defaultWeight,
           labels: section.exercises.map((exercise) => exercise.label),
         }))
-      : [{ id: "draft-section-1", name: "Sección 1", labels: [] as string[] }],
+      : [emptySection("draft-section-1")],
   );
   const activeMembers = useMemo(
     () => members.filter((member) => member.active),
@@ -209,13 +224,9 @@ export default function AppShell({
       : [],
   );
   const [modal, setModal] = useState<ModalState | null>(null);
-  const [rule, setRule] = useState<
-    "manual" | "range" | "odd" | "even" | "multiple"
-  >("multiple");
   const [distributionMode, setDistributionMode] = useState<DistributionMode>(() =>
     distributionModeFromRule(currentAssignment?.sections[0]?.rule),
   );
-  const [input, setInput] = useState("5 al 25");
   const [toast, setToast] = useState("");
   const defaultReport = currentAssignment
     ? reportText(
@@ -297,9 +308,15 @@ export default function AppShell({
   };
   const regenerate = () => {
     try {
-      const labels = generateLabels(input, rule);
-      const next = buildExercises(sectionDefs.map((section) => ({ ...section, labels })));
-      setSectionDefs((current) => current.map((section) => ({ ...section, labels })));
+      const regenerated = sectionDefs.map((section) => ({
+        ...section,
+        labels: generateSectionLabels(section),
+      }));
+      const next = buildExercises(regenerated).map((exercise) => ({
+        ...exercise,
+        weight: regenerated.find((section) => section.id === exercise.sectionId)?.defaultWeight ?? 1,
+      }));
+      setSectionDefs(regenerated);
       setExercises(next);
       const eligible = activeMembers.filter((member) => !excludedMemberIds.includes(member.id));
       setAllocations(
@@ -556,10 +573,6 @@ export default function AppShell({
               setExercises={setExercises}
               allocations={allocations}
               setAllocations={setAllocations}
-              rule={rule}
-              setRule={setRule}
-              input={input}
-              setInput={setInput}
               regenerate={regenerate}
               assignmentId={currentAssignmentId}
               sections={sectionDefs}
@@ -1201,10 +1214,6 @@ function Distribution({
   setExercises,
   allocations,
   setAllocations,
-  rule,
-  setRule,
-  input,
-  setInput,
   regenerate,
   assignmentId,
   sections,
@@ -1221,16 +1230,10 @@ function Distribution({
   setExercises: React.Dispatch<React.SetStateAction<Exercise[]>>;
   allocations: Allocation[];
   setAllocations: React.Dispatch<React.SetStateAction<Allocation[]>>;
-  rule: "manual" | "range" | "odd" | "even" | "multiple";
-  setRule: (v: "manual" | "range" | "odd" | "even" | "multiple") => void;
-  input: string;
-  setInput: (v: string) => void;
   regenerate: () => void;
   assignmentId?: string;
-  sections: Array<{ id: string; name: string; labels: string[] }>;
-  setSections: React.Dispatch<
-    React.SetStateAction<Array<{ id: string; name: string; labels: string[] }>>
-  >;
+  sections: SectionConfig[];
+  setSections: React.Dispatch<React.SetStateAction<SectionConfig[]>>;
   excludedMemberIds: string[];
   setExcludedMemberIds: React.Dispatch<React.SetStateAction<string[]>>;
   distributionMode: DistributionMode;
@@ -1247,6 +1250,16 @@ function Distribution({
   const [saveMessage, setSaveMessage] = useState("");
   const [exportView, setExportView] = useState<"section" | "member" | "summary">("member");
   const [exportMessage, setExportMessage] = useState("");
+  const [imageOptions, setImageOptions] = useState<DistributionImageOptions>({
+    view: "matrix",
+    includeDueDate: true,
+    includeInstructions: true,
+    includeTotal: true,
+    includeWeight: false,
+    size: "normal",
+    orientation: "vertical",
+    footer: "Resolver todos los ejercicios mostrando el procedimiento completo y enviar en formato PDF legible.",
+  });
   const move = (eid: string, mid: string) =>
     setAllocations((a) =>
       a.map((x) =>
@@ -1281,6 +1294,49 @@ function Distribution({
       current.filter((allocation) => !removedExercises.has(allocation.exerciseId)),
     );
   };
+  const updateSection = (id: string, patch: Partial<SectionConfig>) =>
+    setSections((current) => current.map((section) =>
+      section.id === id ? { ...section, ...patch } : section,
+    ));
+  const rebuildFromSections = (nextSections: SectionConfig[]) => {
+    const nextExercises = buildExercises(nextSections).map((exercise) => ({
+      ...exercise,
+      weight: nextSections.find((section) => section.id === exercise.sectionId)?.defaultWeight ?? 1,
+    }));
+    setSections(nextSections);
+    setExercises(nextExercises);
+    const eligible = members.filter((member) => !excludedMemberIds.includes(member.id));
+    setAllocations(eligible.length
+      ? distributeByMode(nextExercises, eligible, distributionMode, allocations)
+      : []);
+  };
+  const regenerateSection = (id: string) => {
+    try {
+      rebuildFromSections(sections.map((section) => section.id === id
+        ? { ...section, labels: generateSectionLabels(section) }
+        : section));
+      setSaveMessage("Sección regenerada sin modificar la configuración de las demás.");
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : "No se pudo regenerar la sección.");
+    }
+  };
+  const moveSection = (id: string, direction: -1 | 1) => {
+    const index = sections.findIndex((section) => section.id === id);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= sections.length) return;
+    const next = [...sections];
+    [next[index], next[target]] = [next[target], next[index]];
+    rebuildFromSections(next);
+  };
+  const duplicateSection = (section: SectionConfig) => {
+    let suffix = 1;
+    let name = `${section.name} copia`;
+    while (sections.some((item) => item.name.toLocaleLowerCase("es") === name.toLocaleLowerCase("es")))
+      name = `${section.name} copia ${++suffix}`;
+    const copy = { ...section, id: crypto.randomUUID(), name, labels: [...section.labels] };
+    const index = sections.findIndex((item) => item.id === section.id);
+    rebuildFromSections([...sections.slice(0, index + 1), copy, ...sections.slice(index + 1)]);
+  };
   const eligibleMembers = members.filter((member) => !excludedMemberIds.includes(member.id));
   const distributionComplete =
     exercises.length > 0 &&
@@ -1303,6 +1359,45 @@ function Distribution({
       })
     : "Crea una tarea para generar el mensaje.";
   const [whatsapp, setWhatsapp] = useState(generatedWhatsapp);
+  const imageSvg = assignment ? createDistributionSvg({
+    courseName,
+    assignmentNumber: assignment.number,
+    assignmentTitle: assignment.title,
+    dueAt: assignment.dueAt,
+    instructions: assignment.instructions,
+    exercises,
+    allocations,
+    members: eligibleMembers,
+    options: imageOptions,
+  }) : "";
+  const imageAction = async (action: "copy" | "download" | "share") => {
+    if (!assignment || !imageSvg) return;
+    try {
+      const png = await svgToPng(imageSvg);
+      const filename = distributionImageFileName(courseName, assignment.number);
+      if (action === "copy") {
+        if (!("ClipboardItem" in window) || !navigator.clipboard?.write)
+          throw new Error("Este navegador no permite copiar imágenes; usa Descargar PNG.");
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+        setExportMessage("Imagen tabular copiada al portapapeles.");
+      } else if (action === "share") {
+        const file = new File([png], filename, { type: "image/png" });
+        if (!navigator.share || !navigator.canShare?.({ files: [file] }))
+          throw new Error("Este dispositivo no permite compartir archivos; usa Descargar PNG.");
+        await navigator.share({ files: [file], title: `${courseName} - distribución` });
+        setExportMessage("Imagen compartida.");
+      } else {
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(png);
+        link.download = filename;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+        setExportMessage(`PNG descargado: ${filename}`);
+      }
+    } catch (error) {
+      setExportMessage(error instanceof Error ? error.message : "No se pudo generar la imagen.");
+    }
+  };
   const copy = async (text: string, success: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -1314,7 +1409,7 @@ function Distribution({
   return (
     <>
       <Title
-        eyebrow="Tarea 5 · Modo híbrido recomendado"
+        eyebrow={`Tarea ${assignment?.number ?? "—"} · Modo híbrido recomendado`}
         title="Distribución de ejercicios"
       >
         <div className="title-actions">
@@ -1332,8 +1427,23 @@ function Distribution({
                   seed: "5",
                   mode: distributionMode,
                   excludedMemberIds,
+                  sections: sections.map((section) => ({
+                    localId: section.id,
+                    name: section.name,
+                    selection: section.selection,
+                    start: section.start,
+                    end: section.end,
+                    interval: section.interval,
+                    manualList: section.manualList,
+                    exclusions: section.exclusions,
+                    inclusions: section.inclusions,
+                    labels: section.labels,
+                    defaultWeight: section.defaultWeight,
+                    notes: section.notes,
+                  })),
                   exercises: exercises.map((item) => ({
                     localId: item.id,
+                    sectionId: item.sectionId,
                     section: item.section,
                     label: item.label,
                     weight: item.weight,
@@ -1397,72 +1507,83 @@ function Distribution({
         <div className="panel-head">
           <div>
             <h3>Secciones de la tarea</h3>
-            <p>Cada sección conserva su propia numeración de ejercicios.</p>
+            <p>Cada tarjeta conserva su propia regla, rango, lista, peso y observaciones.</p>
           </div>
           <button
             className="outline"
             onClick={() =>
               setSections((current) => [
                 ...current,
-                {
-                  id: crypto.randomUUID(),
-                  name: `Sección ${current.length + 1}`,
-                  labels: [],
-                },
+                emptySection(crypto.randomUUID(), `Sección ${current.length + 1}`),
               ])
             }
           >
             <Plus size={16} /> Agregar sección
           </button>
         </div>
+        <div className="section-total">
+          <strong>{sections.reduce((total, section) => total + section.labels.length, 0)} ejercicios en total</strong>
+          <span>{sections.length} sección(es) configurada(s)</span>
+        </div>
         <div className="section-list">
           {sections.map((section, index) => (
-            <div key={section.id}>
-              <label>
-                Nombre de sección {index + 1}
-                <input
-                  value={section.name}
-                  onChange={(event) => renameSection(section.id, event.target.value)}
-                />
-              </label>
-              <span>{section.labels.length} ejercicio(s)</span>
-              <button
-                aria-label={`Eliminar ${section.name}`}
-                disabled={sections.length === 1}
-                onClick={() => removeSection(section.id)}
-              >
-                Eliminar
-              </button>
-            </div>
+            <article className="section-card" key={section.id}>
+              <header>
+                <label>
+                  Nombre o número de sección
+                  <input value={section.name} onChange={(event) => renameSection(section.id, event.target.value)} />
+                </label>
+                <span className={section.labels.length ? "section-count" : "section-count warning"}>
+                  {section.labels.length} ejercicio(s)
+                </span>
+              </header>
+              <div className="section-fields">
+                <label>
+                  Tipo de selección
+                  <select value={section.selection} onChange={(event) => updateSection(section.id, { selection: event.target.value as SectionConfig["selection"] })}>
+                    <option value="range">Rango completo</option>
+                    <option value="odd">Impares</option>
+                    <option value="even">Pares</option>
+                    <option value="multiple">Múltiplos</option>
+                    <option value="manual">Lista manual</option>
+                  </select>
+                </label>
+                {section.selection === "manual" ? (
+                  <label className="wide">
+                    Lista manual
+                    <textarea rows={2} value={section.manualList} onChange={(event) => updateSection(section.id, { manualList: event.target.value })} placeholder="5, 10, 15, 20" />
+                  </label>
+                ) : (
+                  <>
+                    <label>Desde<input type="number" min="0" value={section.start} onChange={(event) => updateSection(section.id, { start: Number(event.target.value) })} /></label>
+                    <label>Hasta<input type="number" min="0" value={section.end} onChange={(event) => updateSection(section.id, { end: Number(event.target.value) })} /></label>
+                    <label>{section.selection === "multiple" ? "Múltiplo de" : "Intervalo"}<input type="number" min="1" value={section.interval} disabled={section.selection !== "multiple" && section.selection !== "range"} onChange={(event) => updateSection(section.id, { interval: Number(event.target.value) })} /></label>
+                    <label>Exclusiones<input value={section.exclusions} onChange={(event) => updateSection(section.id, { exclusions: event.target.value })} placeholder="7, 12" /></label>
+                    <label>Inclusiones especiales<input value={section.inclusions} onChange={(event) => updateSection(section.id, { inclusions: event.target.value })} placeholder="8a, 30" /></label>
+                  </>
+                )}
+                <label>Peso por ejercicio<input type="number" min="0.1" max="100" step="0.1" value={section.defaultWeight} onChange={(event) => updateSection(section.id, { defaultWeight: Number(event.target.value) })} /></label>
+                <label className="wide">Observaciones<input value={section.notes} onChange={(event) => updateSection(section.id, { notes: event.target.value })} /></label>
+              </div>
+              <div className="section-preview">
+                <small>Vista previa persistida</small>
+                <b>{section.labels.join(", ") || "Sin ejercicios. Configura y regenera esta sección."}</b>
+                {section.selection === "manual" && duplicateLabels(section.manualList).length > 0 && (
+                  <em>Duplicados omitidos dentro de esta sección: {duplicateLabels(section.manualList).join(", ")}</em>
+                )}
+              </div>
+              <footer className="section-actions">
+                <button className="primary" onClick={() => regenerateSection(section.id)}>Regenerar ejercicios</button>
+                <button className="outline" onClick={() => duplicateSection(section)}>Duplicar</button>
+                <button className="outline" disabled={index === 0} onClick={() => moveSection(section.id, -1)}>Subir</button>
+                <button className="outline" disabled={index === sections.length - 1} onClick={() => moveSection(section.id, 1)}>Bajar</button>
+                <button className="outline" onClick={() => rebuildFromSections(sections.map((item) => item.id === section.id ? emptySection(section.id, section.name) : item))}>Limpiar configuración</button>
+                <button aria-label={`Eliminar ${section.name}`} disabled={sections.length === 1} onClick={() => removeSection(section.id)}>Eliminar</button>
+              </footer>
+            </article>
           ))}
         </div>
-      </div>
-      <div className="generator panel">
-        <label>
-          Regla de selección
-          <select
-            value={rule}
-            onChange={(e) => setRule(e.target.value as typeof rule)}
-          >
-            <option value="range">Rango completo</option>
-            <option value="odd">Impares</option>
-            <option value="even">Pares</option>
-            <option value="multiple">Múltiplos de 5</option>
-            <option value="manual">Lista manual</option>
-          </select>
-        </label>
-        <label>
-          Valores
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="1 al 25 o 5, 10, 15"
-          />
-        </label>
-        <div>
-          <small>Vista previa</small>
-          <b>{generateSafe(input, rule).join(", ") || "—"}</b>
-        </div>
+        {sections.some((section) => section.labels.length === 0) && <p className="notice">Hay secciones sin ejercicios; regenera cada una antes de distribuir.</p>}
       </div>
       <div className="matrix panel">
         <table>
@@ -1561,10 +1682,51 @@ function Distribution({
             <button className="outline" onClick={() => copy(exportedText, "Vista copiada.")}>Copiar {exportView === "summary" ? "tabla" : "texto"}</button>
             <button
               className="outline"
-              onClick={async () => setExportMessage(await copyDistributionImage(exportedText))}
+              onClick={() => {
+                const blob = new Blob([summaryView], { type: "text/tab-separated-values;charset=utf-8" });
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(blob);
+                link.download = `${courseName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-tarea-${assignment?.number ?? ""}-distribucion.tsv`;
+                link.click();
+                URL.revokeObjectURL(link.href);
+                setExportMessage("Tabla TSV descargada.");
+              }}
             >
-              Copiar como imagen
+              Exportar TSV
             </button>
+          </div>
+        </section>
+        <section className="panel image-export-panel">
+          <div>
+            <h3>Imagen tabular PNG</h3>
+            <p>Vista previa real, adaptable y lista para WhatsApp.</p>
+          </div>
+          <div className="image-export-controls">
+            <label>Vista<select value={imageOptions.view} onChange={(event) => setImageOptions((current) => ({ ...current, view: event.target.value as DistributionImageOptions["view"] }))}><option value="matrix">Matriz general</option><option value="member">Por integrante</option><option value="section">Por sección</option></select></label>
+            <label>Tamaño<select value={imageOptions.size} onChange={(event) => setImageOptions((current) => ({ ...current, size: event.target.value as DistributionImageOptions["size"] }))}><option value="compact">Compacto</option><option value="normal">Normal</option><option value="large">Grande</option></select></label>
+            <label>Orientación<select value={imageOptions.orientation} onChange={(event) => setImageOptions((current) => ({ ...current, orientation: event.target.value as DistributionImageOptions["orientation"] }))}><option value="vertical">Vertical</option><option value="horizontal">Horizontal</option></select></label>
+          </div>
+          <div className="image-export-checks">
+            {[
+              ["includeDueDate", "Fecha límite"],
+              ["includeInstructions", "Instrucciones"],
+              ["includeTotal", "Cantidad total"],
+              ["includeWeight", "Peso total"],
+            ].map(([key, label]) => (
+              <label key={key}><input type="checkbox" checked={imageOptions[key as keyof DistributionImageOptions] as boolean} onChange={(event) => setImageOptions((current) => ({ ...current, [key]: event.target.checked }))} />{label}</label>
+            ))}
+          </div>
+          <label>Pie editable<textarea rows={3} value={imageOptions.footer} onChange={(event) => setImageOptions((current) => ({ ...current, footer: event.target.value }))} /></label>
+          {imageSvg ? (
+            <div className="image-preview">
+              {/* eslint-disable-next-line @next/next/no-img-element -- vista SVG local generada, no es un recurso optimizable */}
+              <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(imageSvg)}`} alt="Vista previa de la distribución tabular" />
+            </div>
+          ) : <p>Genera una distribución para ver la imagen.</p>}
+          <div className="title-actions">
+            <button className="outline" disabled={!exercises.length} onClick={() => imageAction("copy")}>Copiar imagen</button>
+            <button className="primary" disabled={!exercises.length} onClick={() => imageAction("download")}>Descargar PNG</button>
+            <button className="outline" disabled={!exercises.length} onClick={() => imageAction("share")}>Compartir</button>
           </div>
         </section>
         <section className="panel whatsapp-panel">
@@ -1587,50 +1749,6 @@ function Distribution({
       {exportMessage && <div className="notice">{exportMessage}</div>}
     </>
   );
-}
-async function copyDistributionImage(text: string) {
-  if (!text.trim()) return "No hay contenido para convertir en imagen.";
-  const lines = text.split("\n");
-  const canvas = document.createElement("canvas");
-  const context = canvas.getContext("2d");
-  if (!context) return "No se pudo crear la imagen.";
-  context.font = "16px ui-monospace, monospace";
-  const width = Math.min(1800, Math.max(600, ...lines.map((line) => context.measureText(line).width + 64)));
-  canvas.width = width;
-  canvas.height = Math.max(180, lines.length * 24 + 64);
-  context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = "#173f34";
-  context.font = "16px ui-monospace, monospace";
-  lines.forEach((line, index) => context.fillText(line, 32, 42 + index * 24));
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
-  if (!blob) return "No se pudo crear la imagen.";
-  try {
-    if (navigator.clipboard && "ClipboardItem" in window) {
-      await navigator.clipboard.write([
-        new ClipboardItem({ "image/png": blob }),
-      ]);
-      return "Imagen copiada al portapapeles.";
-    }
-  } catch {
-    // Continúa con descarga local como alternativa segura.
-  }
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = "distribucion.png";
-  link.click();
-  URL.revokeObjectURL(link.href);
-  return "El navegador descargó la imagen porque no admite copiarla.";
-}
-function generateSafe(
-  input: string,
-  rule: "manual" | "range" | "odd" | "even" | "multiple",
-) {
-  try {
-    return generateLabels(input, rule);
-  } catch {
-    return [];
-  }
 }
 function Submissions({ courses }: { courses: DashboardData }) {
   const router = useRouter();

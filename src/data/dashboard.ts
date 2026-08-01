@@ -70,6 +70,8 @@ export async function getDashboardData(userId: string) {
               id: true,
               name: true,
               rule: true,
+              notes: true,
+              defaultWeight: true,
               exercises: {
                 orderBy: { sortOrder: "asc" },
                 select: {

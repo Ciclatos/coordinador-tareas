@@ -789,6 +789,7 @@ th small {
 .section-list select,
 .section-list textarea,
 .image-export-panel select,
+.image-export-panel input[type="color"],
 .image-export-panel textarea {
   height: 38px;
   border: 1px solid #ccd8d4;
@@ -796,6 +797,7 @@ th small {
   padding: 0 10px;
   background: white;
 }
+.image-export-panel input[type="color"] { width: 100%; padding: 4px 8px; }
 .section-list textarea,
 .image-export-panel textarea { height: auto; padding: 10px; resize: vertical; }
 .section-count {
@@ -926,6 +928,19 @@ th small {
   background: #e8eeeb;
 }
 .image-preview img { display: block; width: 100%; height: auto; background: white; }
+.image-preview-empty {
+  margin: 16px 0;
+  padding: 38px 18px;
+  text-align: center;
+  border: 1px dashed #b7cbc4;
+  border-radius: 10px;
+  background: #f4f8f6;
+  color: var(--muted);
+}
+.export-note { padding: 10px 12px; border-radius: 8px; background: #fff8e9; color: #685026; }
+.preview-pages { display: flex; gap: 7px; flex-wrap: wrap; margin: -4px 0 14px; }
+.preview-pages button { border: 1px solid #c8d7d2; border-radius: 999px; background: white; padding: 6px 11px; cursor: pointer; }
+.preview-pages button.active { border-color: var(--green); background: var(--mint); color: var(--green); font-weight: 700; }
 .distribution-exports > section {
   padding: 18px;
 }

@@ -116,7 +116,7 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   await page.getByRole("button", { name: "Redistribuir" }).click();
   await expect(page.getByText(/20 ejercicios distribuidos sin duplicados/)).toBeVisible();
   await page.getByRole("button", { name: "Guardar distribución" }).click();
-  await expect(page.getByText("Distribución guardada y reproducible.")).toBeVisible();
+  await expect(page.getByText("Distribución guardada y reproducible.")).toBeVisible({ timeout: 30_000 });
 
   await page.reload();
   await page.getByRole("navigation").getByRole("button", { name: "Distribución", exact: true }).click();
@@ -130,9 +130,11 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   await expect(page.getByRole("columnheader", { name: "5.4" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "5.5" })).toBeVisible();
   const whatsapp = page.locator(".whatsapp-panel textarea");
-  await expect(whatsapp).toHaveValue(/Sección 5.3:/);
-  await expect(whatsapp).toHaveValue(/Sección 5.4:/);
-  await expect(whatsapp).toHaveValue(/Sección 5.5:/);
+  await expect(whatsapp).toHaveValue(/📘 Curso E2E/);
+  await expect(whatsapp).toHaveValue(/• 5.3:/);
+  await expect(whatsapp).toHaveValue(/• 5.4:/);
+  await expect(whatsapp).toHaveValue(/• 5.5:/);
+  await expect(whatsapp).toHaveValue(/• Total: 20 ejercicios/);
 
   await cards.nth(1).getByLabel("Hasta").fill("45");
   await cards.nth(1).getByRole("button", { name: "Regenerar ejercicios" }).click();
@@ -142,9 +144,15 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   await cards.nth(1).getByLabel("Hasta").fill("50");
   await cards.nth(1).getByRole("button", { name: "Regenerar ejercicios" }).click();
   await page.getByRole("button", { name: "Guardar distribución" }).click();
-  await expect(page.getByText("Distribución guardada y reproducible.")).toBeVisible();
+  await expect(page.getByText("Distribución guardada y reproducible.")).toBeVisible({ timeout: 30_000 });
 
-  await expect(page.getByAltText("Vista previa de la distribución tabular")).toBeVisible();
+  const imagePanel = page.locator(".image-export-panel");
+  await expect(imagePanel.getByLabel("Formato")).toHaveValue("summary");
+  await expect(imagePanel.getByLabel("Tamaño")).toHaveValue("whatsapp");
+  await expect(imagePanel.locator("select").nth(2)).toHaveValue("full");
+  await imagePanel.getByRole("button", { name: "Generar imagen" }).click();
+  const preview = imagePanel.locator(".image-preview img");
+  await expect(preview).toBeVisible();
   const pngDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "Descargar PNG" }).click();
   const png = await pngDownload;
@@ -158,8 +166,34 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   expect(metadata.width).toBeGreaterThanOrEqual(900);
   expect(metadata.height).toBeGreaterThanOrEqual(600);
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByAltText("Vista previa de la distribución tabular")).toBeVisible();
+  await expect(preview).toBeVisible();
+  await expect(page.locator(".image-export-panel")).toHaveCSS("grid-column-start", "auto");
   await page.setViewportSize({ width: 1280, height: 900 });
+
+  await imagePanel.getByLabel("Formato").selectOption("cards");
+  await imagePanel.getByRole("button", { name: "Generar imagen" }).click();
+  const zipDownload = page.waitForEvent("download");
+  await imagePanel.getByRole("button", { name: "Descargar tarjetas en ZIP" }).click();
+  const zip = await zipDownload;
+  expect(zip.suggestedFilename()).toMatch(/tarea-1-tarjetas\.zip$/);
+  const zipStream = await zip.createReadStream();
+  const zipChunks: Buffer[] = [];
+  for await (const chunk of zipStream) zipChunks.push(Buffer.from(chunk));
+  expect(Buffer.concat(zipChunks).subarray(0, 2).toString()).toBe("PK");
+
+  await page.evaluate(() => Object.defineProperty(window, "ClipboardItem", { configurable: true, value: undefined }));
+  const clipboardFallback = page.waitForEvent("download");
+  await imagePanel.getByRole("button", { name: "Copiar imagen" }).click();
+  await clipboardFallback;
+  await expect(page.getByText(/se descargó el PNG como alternativa/i)).toBeVisible();
+
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "share", { configurable: true, value: undefined });
+    Object.defineProperty(navigator, "canShare", { configurable: true, value: undefined });
+  });
+  const shareFallback = page.waitForEvent("download");
+  await imagePanel.getByRole("button", { name: "Compartir", exact: true }).click();
+  await shareFallback;
 
   await page.getByRole("navigation").getByRole("button", { name: "Entregas", exact: true }).click();
   const fixture = await PDFDocument.create();

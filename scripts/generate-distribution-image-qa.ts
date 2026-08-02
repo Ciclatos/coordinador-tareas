@@ -1,51 +1,60 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
-import { buildExercises, demoMembers, distribute } from "../src/lib/domain";
-import { createDistributionSvg } from "../src/lib/distribution-image";
+import { buildExercises, distribute, type Member } from "../src/lib/domain";
+import { createDistributionImages, type DistributionImageOptions } from "../src/lib/distribution-image";
 
-const exercises = buildExercises([
-  { id: "qa-53", name: "5.3", labels: ["5", "10", "15", "20", "25", "30"] },
-  { id: "qa-54", name: "5.4", labels: ["5", "10", "15", "20", "25", "30", "35", "40", "45", "50"] },
-  { id: "qa-55", name: "5.5", labels: ["5", "10", "15", "20"] },
-]);
-const members = demoMembers.map((member, index) => ({
-  ...member,
-  name: index === 0 ? "Alejandra María de los Ángeles - Nombre Ficticio Extenso" : member.name,
+const names = [
+  "Carlos Eduardo Díaz García",
+  "Jonathan Iván de la Cruz Jiménez",
+  "Alejandra María de los Ángeles Ramírez",
+  "María Fernanda Castellanos Monterroso",
+  "José Alejandro Hernández Villanueva",
+  "Ana Sofía del Rosario López Mendoza",
+];
+const members: Member[] = names.map((name, index) => ({
+  id: `qa-m${index + 1}`, name, shortName: name.split(" ")[0], carnet: `2026-01-${1001 + index}`,
+  historicalLoad: 0, active: true,
 }));
-const svg = createDistributionSvg({
-  courseName: "Cálculo II - Demostración",
-  assignmentNumber: 4,
-  assignmentTitle: "Sucesiones y series",
-  dueAt: "2026-08-10T23:59:00-06:00",
-  instructions: "Presentar cada procedimiento completo, ordenado y con resultados legibles.",
-  exercises,
-  allocations: distribute(exercises, members),
-  members,
-  options: {
-    view: "matrix",
-    includeDueDate: true,
-    includeInstructions: true,
-    includeTotal: true,
-    includeWeight: true,
-    size: "large",
-    orientation: "horizontal",
-    footer: "Resolver todos los ejercicios mostrando el procedimiento completo y enviar en formato PDF legible.",
-  },
-});
+const sequence = (start: number) => Array.from({ length: 76 }, (_, index) => String(start + index * 6));
+const exercises = buildExercises([
+  { id: "qa-53", name: "5.3", labels: sequence(2) },
+  { id: "qa-54", name: "5.4", labels: sequence(4) },
+  { id: "qa-55", name: "5.5", labels: sequence(6) },
+]);
+const allocations = distribute(exercises, members);
+const options: DistributionImageOptions = {
+  view: "summary", includeDueDate: true, includeInstructions: true, includeTotal: true,
+  includeWeight: false, size: "whatsapp", nameMode: "full", primaryColor: "#17624f",
+  footer: "Resolver todos los ejercicios mostrando el procedimiento completo y enviar en un PDF legible.",
+};
+const input = {
+  courseName: "Cálculo 2", assignmentNumber: 4, assignmentTitle: "Sucesiones y series",
+  dueAt: "2026-08-10T18:00:00-06:00", instructions: null, exercises, allocations, members, options,
+};
 
-async function main() {
-  const outputDirectory = path.resolve("output/qa");
-  const output = path.join(outputDirectory, "distribucion-secciones-diferentes.png");
-  await mkdir(outputDirectory, { recursive: true });
+async function writePng(svg: string, output: string) {
   await sharp(Buffer.from(svg)).png({ compressionLevel: 9 }).toFile(output);
   const metadata = await sharp(output).metadata();
-  if (metadata.format !== "png" || (metadata.width ?? 0) < 1200 || (metadata.height ?? 0) < 700)
-    throw new Error("La imagen de QA no cumple formato o resolución mínima.");
-  console.log(JSON.stringify({ output, format: metadata.format, width: metadata.width, height: metadata.height }, null, 2));
+  if (metadata.format !== "png" || !metadata.width || !metadata.height)
+    throw new Error(`PNG inválido: ${output}`);
+  return { output, width: metadata.width, height: metadata.height, format: metadata.format };
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+async function main() {
+  const directory = path.resolve("output/qa");
+  await mkdir(directory, { recursive: true });
+  const summary = createDistributionImages(input);
+  if (summary.length < 2) throw new Error("El caso largo no se dividió en varias partes.");
+  const card = createDistributionImages({ ...input, options: { ...options, view: "cards" } })[0];
+  const matrix = createDistributionImages({ ...input, options: { ...options, view: "matrix", size: "high" } })[0];
+  const results = await Promise.all([
+    writePng(summary[0].svg, path.join(directory, "whatsapp-resumen.png")),
+    writePng(summary[1].svg, path.join(directory, "whatsapp-resumen-parte-2.png")),
+    writePng(card.svg, path.join(directory, "tarjeta-integrante.png")),
+    writePng(matrix.svg, path.join(directory, "matriz-clasica.png")),
+  ]);
+  console.log(JSON.stringify({ members: members.length, sections: 3, exercises: exercises.length, totals: members.map((member) => allocations.filter((item) => item.memberId === member.id).length), results }, null, 2));
+}
+
+main().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -77,12 +77,25 @@ export function whatsappMessage(input: {
   title: string;
   dueAt: string;
   instructions?: string | null;
-  memberView: string;
+  exercises: Exercise[];
+  allocations: Allocation[];
+  members: Member[];
 }) {
   const due = new Intl.DateTimeFormat("es-GT", {
-    dateStyle: "full",
-    timeStyle: "short",
+    day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit",
+    hour12: false,
     timeZone: "America/Guatemala",
-  }).format(new Date(input.dueAt));
-  return `*${input.courseName} - Tarea ${input.assignmentNumber}*\n${input.title}\n\n*Distribución*\n${input.memberView}\n\n*Fecha límite:* ${due}\n*Formatos:* PDF, JPG, PNG o WEBP.\n${input.instructions?.trim() ? `*Instrucciones:* ${input.instructions.trim()}\n` : ""}Recuerden enviar el procedimiento completo, ordenado y legible.`;
+  }).format(new Date(input.dueAt)).replace(",", " —");
+  const sections = [...new Set(input.exercises.map((exercise) => exercise.section))];
+  const members = input.members.map((member) => {
+    const assigned = input.exercises.filter((exercise) =>
+      input.allocations.some((allocation) => allocation.exerciseId === exercise.id && allocation.memberId === member.id));
+    const groups = sections.map((section) => {
+      const labels = assigned.filter((exercise) => exercise.section === section).map((exercise) => exercise.label);
+      return labels.length ? `• ${section}: ${labels.join(", ")}` : "";
+    }).filter(Boolean);
+    return `${member.name}\n${groups.join("\n") || "• Sin ejercicios"}\n• Total: ${assigned.length} ejercicio${assigned.length === 1 ? "" : "s"}`;
+  }).join("\n\n");
+  const reminder = input.instructions?.trim() || "Resolver mostrando el procedimiento completo y enviar en PDF legible.";
+  return `📘 ${input.courseName} — Tarea ${input.assignmentNumber}${input.title ? `: ${input.title}` : ""}\n📅 Entrega: ${due}\n📚 Secciones: ${sections.join(", ")}\n\n${members}\n\nRecordatorio:\n${reminder}`;
 }

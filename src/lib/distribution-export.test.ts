@@ -29,10 +29,18 @@ describe("exportaciones de distribución", () => {
       title: "Sucesiones",
       dueAt: "2026-08-10T05:59:00.000Z",
       instructions: "Usar tinta negra.",
-      memberView: "Ana: 1, 2",
+      exercises,
+      allocations,
+      members,
     });
-    expect(message).toContain("*Matemática - Tarea 5*");
-    expect(message).toContain("PDF, JPG, PNG o WEBP");
+    expect(message).toContain("📘 Matemática — Tarea 5: Sucesiones");
+    expect(message).toContain("📚 Secciones: 5.3, 5.4");
+    expect(message).toContain("Ana Lucía Pérez");
+    members.forEach((member) => {
+      const total = allocations.filter((allocation) => allocation.memberId === member.id).length;
+      expect(message).toContain(`• Total: ${total} ejercicio${total === 1 ? "" : "s"}`);
+    });
     expect(message).toContain("Usar tinta negra");
+    exercises.forEach((exercise) => expect(message).toContain(exercise.label));
   });
 });

@@ -67,10 +67,13 @@ import {
   type SectionConfig,
 } from "@/lib/section-config";
 import {
-  createDistributionSvg,
-  distributionImageFileName,
+  createDistributionImages,
+  downloadBlob,
+  imageExportCapabilities,
+  pngZip,
   svgToPng,
   type DistributionImageOptions,
+  type DistributionImagePage,
 } from "@/lib/distribution-image";
 
 type View =
@@ -1250,15 +1253,18 @@ function Distribution({
   const [saveMessage, setSaveMessage] = useState("");
   const [exportView, setExportView] = useState<"section" | "member" | "summary">("member");
   const [exportMessage, setExportMessage] = useState("");
+  const [imagePages, setImagePages] = useState<DistributionImagePage[]>([]);
+  const [imagePageIndex, setImagePageIndex] = useState(0);
   const [imageOptions, setImageOptions] = useState<DistributionImageOptions>({
-    view: "matrix",
+    view: "summary",
     includeDueDate: true,
     includeInstructions: true,
     includeTotal: true,
     includeWeight: false,
-    size: "normal",
-    orientation: "vertical",
-    footer: "Resolver todos los ejercicios mostrando el procedimiento completo y enviar en formato PDF legible.",
+    size: "whatsapp",
+    nameMode: "full",
+    primaryColor: "#17624f",
+    footer: "Resolver todos los ejercicios mostrando el procedimiento completo y enviar en un PDF legible.",
   });
   const move = (eid: string, mid: string) =>
     setAllocations((a) =>
@@ -1355,11 +1361,13 @@ function Distribution({
         title: assignment.title,
         dueAt: assignment.dueAt,
         instructions: assignment.instructions,
-        memberView,
+        exercises,
+        allocations,
+        members: eligibleMembers,
       })
     : "Crea una tarea para generar el mensaje.";
   const [whatsapp, setWhatsapp] = useState(generatedWhatsapp);
-  const imageSvg = assignment ? createDistributionSvg({
+  const imageInput = assignment ? {
     courseName,
     assignmentNumber: assignment.number,
     assignmentTitle: assignment.title,
@@ -1369,33 +1377,58 @@ function Distribution({
     allocations,
     members: eligibleMembers,
     options: imageOptions,
-  }) : "";
+  } : null;
+  const generatedPage = imagePages[imagePageIndex];
+  const generateImages = () => {
+    if (!imageInput) return;
+    const pages = createDistributionImages(imageInput);
+    setImagePages(pages);
+    setImagePageIndex(0);
+    setExportMessage(`${pages.length} imagen${pages.length === 1 ? "" : "es"} generada${pages.length === 1 ? "" : "s"}.`);
+  };
   const imageAction = async (action: "copy" | "download" | "share") => {
-    if (!assignment || !imageSvg) return;
+    if (!assignment || !generatedPage) return;
     try {
-      const png = await svgToPng(imageSvg);
-      const filename = distributionImageFileName(courseName, assignment.number);
+      const png = await svgToPng(generatedPage.svg);
+      const filename = generatedPage.filename;
+      const capabilities = imageExportCapabilities(navigator);
       if (action === "copy") {
-        if (!("ClipboardItem" in window) || !navigator.clipboard?.write)
-          throw new Error("Este navegador no permite copiar imágenes; usa Descargar PNG.");
+        if (!capabilities.clipboard) {
+          downloadBlob(png, filename);
+          setExportMessage("El navegador no permite copiar imágenes; se descargó el PNG como alternativa.");
+          return;
+        }
         await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
-        setExportMessage("Imagen tabular copiada al portapapeles.");
+        setExportMessage("Imagen copiada al portapapeles.");
       } else if (action === "share") {
         const file = new File([png], filename, { type: "image/png" });
-        if (!navigator.share || !navigator.canShare?.({ files: [file] }))
-          throw new Error("Este dispositivo no permite compartir archivos; usa Descargar PNG.");
+        if (!capabilities.share || !navigator.canShare?.({ files: [file] })) {
+          downloadBlob(png, filename);
+          setExportMessage("Este dispositivo no permite compartir archivos; se descargó el PNG como alternativa.");
+          return;
+        }
         await navigator.share({ files: [file], title: `${courseName} - distribución` });
         setExportMessage("Imagen compartida.");
       } else {
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(png);
-        link.download = filename;
-        link.click();
-        setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+        downloadBlob(png, filename);
         setExportMessage(`PNG descargado: ${filename}`);
       }
     } catch (error) {
       setExportMessage(error instanceof Error ? error.message : "No se pudo generar la imagen.");
+    }
+  };
+  const downloadCardsZip = async () => {
+    if (!imagePages.length || imageOptions.view !== "cards" || !assignment) return;
+    try {
+      const files = await Promise.all(imagePages.map(async (page) => ({
+        filename: page.filename,
+        bytes: new Uint8Array(await (await svgToPng(page.svg)).arrayBuffer()),
+      })));
+      const filename = `${courseName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "curso"}-tarea-${assignment.number}-tarjetas.zip`;
+      downloadBlob(pngZip(files), filename);
+      setExportMessage(`ZIP descargado: ${filename}`);
+    } catch (error) {
+      setExportMessage(error instanceof Error ? error.message : "No se pudo crear el ZIP.");
     }
   };
   const copy = async (text: string, success: string) => {
@@ -1698,14 +1731,16 @@ function Distribution({
         </section>
         <section className="panel image-export-panel">
           <div>
-            <h3>Imagen tabular PNG</h3>
-            <p>Vista previa real, adaptable y lista para WhatsApp.</p>
+            <h3>Exportar imagen para WhatsApp</h3>
+            <p>Composición vertical legible en teléfono, generada como PNG real desde los datos.</p>
           </div>
           <div className="image-export-controls">
-            <label>Vista<select value={imageOptions.view} onChange={(event) => setImageOptions((current) => ({ ...current, view: event.target.value as DistributionImageOptions["view"] }))}><option value="matrix">Matriz general</option><option value="member">Por integrante</option><option value="section">Por sección</option></select></label>
-            <label>Tamaño<select value={imageOptions.size} onChange={(event) => setImageOptions((current) => ({ ...current, size: event.target.value as DistributionImageOptions["size"] }))}><option value="compact">Compacto</option><option value="normal">Normal</option><option value="large">Grande</option></select></label>
-            <label>Orientación<select value={imageOptions.orientation} onChange={(event) => setImageOptions((current) => ({ ...current, orientation: event.target.value as DistributionImageOptions["orientation"] }))}><option value="vertical">Vertical</option><option value="horizontal">Horizontal</option></select></label>
+            <label>Formato<select value={imageOptions.view} onChange={(event) => { setImageOptions((current) => ({ ...current, view: event.target.value as DistributionImageOptions["view"] })); setImagePages([]); }}><option value="summary">Resumen por integrante</option><option value="cards">Tarjetas individuales</option><option value="matrix">Matriz clásica</option></select></label>
+            <label>Tamaño<select value={imageOptions.size} onChange={(event) => { setImageOptions((current) => ({ ...current, size: event.target.value as DistributionImageOptions["size"] })); setImagePages([]); }}><option value="whatsapp">WhatsApp</option><option value="high">Alta resolución</option></select></label>
+            <label>Nombre<select value={imageOptions.nameMode} onChange={(event) => { setImageOptions((current) => ({ ...current, nameMode: event.target.value as DistributionImageOptions["nameMode"] })); setImagePages([]); }}><option value="full">Nombre completo</option><option value="short">Nombre corto</option></select></label>
+            <label>Color principal<input type="color" value={imageOptions.primaryColor} onChange={(event) => { setImageOptions((current) => ({ ...current, primaryColor: event.target.value })); setImagePages([]); }} /></label>
           </div>
+          {imageOptions.view === "matrix" && <p className="export-note"><strong>Matriz clásica.</strong> Recomendada para Excel o revisión interna. Para WhatsApp, use Resumen por integrante.</p>}
           <div className="image-export-checks">
             {[
               ["includeDueDate", "Fecha límite"],
@@ -1713,20 +1748,25 @@ function Distribution({
               ["includeTotal", "Cantidad total"],
               ["includeWeight", "Peso total"],
             ].map(([key, label]) => (
-              <label key={key}><input type="checkbox" checked={imageOptions[key as keyof DistributionImageOptions] as boolean} onChange={(event) => setImageOptions((current) => ({ ...current, [key]: event.target.checked }))} />{label}</label>
+              <label key={key}><input type="checkbox" checked={imageOptions[key as keyof DistributionImageOptions] as boolean} onChange={(event) => { setImageOptions((current) => ({ ...current, [key]: event.target.checked })); setImagePages([]); }} />{label}</label>
             ))}
           </div>
-          <label>Pie editable<textarea rows={3} value={imageOptions.footer} onChange={(event) => setImageOptions((current) => ({ ...current, footer: event.target.value }))} /></label>
-          {imageSvg ? (
+          <label>Pie editable<textarea rows={3} value={imageOptions.footer} onChange={(event) => { setImageOptions((current) => ({ ...current, footer: event.target.value })); setImagePages([]); }} /></label>
+          {generatedPage ? (
             <div className="image-preview">
               {/* eslint-disable-next-line @next/next/no-img-element -- vista SVG local generada, no es un recurso optimizable */}
-              <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(imageSvg)}`} alt="Vista previa de la distribución tabular" />
+              <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(generatedPage.svg)}`} alt={`Vista previa ${generatedPage.filename}`} />
             </div>
-          ) : <p>Genera una distribución para ver la imagen.</p>}
+          ) : <div className="image-preview-empty">Pulsa “Generar imagen” para actualizar la vista previa.</div>}
+          {imagePages.length > 1 && <div className="preview-pages" aria-label="Páginas generadas">
+            {imagePages.map((page, index) => <button type="button" className={imagePageIndex === index ? "active" : ""} key={`${page.filename}-${index}`} onClick={() => setImagePageIndex(index)}>{imageOptions.view === "cards" ? (eligibleMembers[index]?.shortName || `Tarjeta ${index + 1}`) : `Parte ${index + 1}`}</button>)}
+          </div>}
           <div className="title-actions">
-            <button className="outline" disabled={!exercises.length} onClick={() => imageAction("copy")}>Copiar imagen</button>
-            <button className="primary" disabled={!exercises.length} onClick={() => imageAction("download")}>Descargar PNG</button>
-            <button className="outline" disabled={!exercises.length} onClick={() => imageAction("share")}>Compartir</button>
+            <button className="primary" disabled={!exercises.length} onClick={generateImages}>Generar imagen</button>
+            <button className="outline" disabled={!generatedPage} onClick={() => imageAction("download")}>Descargar PNG</button>
+            <button className="outline" disabled={!generatedPage} onClick={() => imageAction("copy")}>Copiar imagen</button>
+            <button className="outline" disabled={!generatedPage} onClick={() => imageAction("share")}>Compartir</button>
+            {imageOptions.view === "cards" && <button className="outline" disabled={!imagePages.length} onClick={downloadCardsZip}>Descargar tarjetas en ZIP</button>}
           </div>
         </section>
         <section className="panel whatsapp-panel">

@@ -666,7 +666,7 @@ export async function saveDistribution(
       where: { id: assignment.id },
       data: { status: "DISTRIBUTED" },
     });
-    });
+    }, { maxWait: 10_000, timeout: 60_000 });
   } catch (error) {
     return {
       ok: false,

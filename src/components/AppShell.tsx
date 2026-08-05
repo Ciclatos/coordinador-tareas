@@ -36,6 +36,7 @@ import { logout } from "@/app/(auth)/actions";
 import type { DashboardData } from "@/data/dashboard";
 import { EntityModal, type EditableEntity } from "@/components/EntityModal";
 import { PdfPageThumbnails } from "@/components/PdfPageThumbnails";
+import PortalManager from "@/components/PortalManager";
 import {
   copyMembers,
   importMembersCsv,
@@ -1931,6 +1932,7 @@ function Submissions({ courses }: { courses: DashboardData }) {
           {assignment?.submissions.length ?? 0} entrega(s) registrada(s)
         </span>
       </Title>
+      {assignment && <PortalManager key={`${assignment.id}-${assignment.submissionPortal?.tokenVersion ?? 0}`} assignment={assignment} refresh={() => router.refresh()} />}
       <div className="generator panel">
         <label>
           Tarea

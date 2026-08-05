@@ -79,6 +79,22 @@ npm run check
 
 Las pruebas unitarias cubren reglas de ejercicios, reinicio por sección, números repetidos entre secciones, distribución determinista, historial, exclusiones, bloqueos, pesos, notas, reporte, autenticación, protección de rutas, selección de páginas y firmas reales de archivos. `npm run test:e2e` ejecuta el flujo Playwright de registro, curso, integrante, tarea, distribución, evaluación y persistencia tras recargar.
 
+## Portal público de entregas
+
+Cada tarea dispone de **Portal de entrega** en la pantalla de entregas. El coordinador puede activarlo, definir apertura/cierre, tardías, reemplazos, formatos, tamaño e instrucciones; copiar o compartir el mensaje; previsualizarlo; y regenerar el token para revocar inmediatamente el enlace anterior.
+
+El estudiante abre `/entregar/[token]` sin cuenta, selecciona su nombre y confirma su carné. El carné se compara exclusivamente en el servidor: nunca se incluye en el HTML ni en las respuestas públicas. Una sesión firmada, `HttpOnly`, `SameSite=Strict` y de 30 minutos queda limitada al portal, tarea e integrante. Los intentos fallidos usan rate limiting progresivo por hash de IP/portal y se auditan sin guardar el carné ingresado.
+
+Después de identificarse, el estudiante ve únicamente su asignación, carga un archivo directamente al Blob privado y confirma el envío. El servidor comprueba tamaño, MIME real, firma/estructura, páginas, integridad y SHA-256 antes de crear una versión en las mismas entidades `Submission`, `SubmissionVersion` y `SubmissionFile` usadas por el coordinador y el constructor del PDF final. La primera entrega conserva su puntualidad; los reemplazos mantienen historial y una corrección solicitada habilita una nueva versión.
+
+No requiere variables nuevas: usa `AUTH_SECRET` para firma/HMAC/cifrado de tokens, la base configurada y `BLOB_READ_WRITE_TOKEN`. La base debe recibir la migración antes del despliegue:
+
+```bash
+npm run db:migrate
+```
+
+Los portales tienen `noindex`, `nofollow`, `no-store`; los archivos no poseen URL pública permanente. El carné es una verificación ligera y no sustituye autenticación de alta seguridad. El rate limiting persistido en Postgres es deliberadamente conservador; instalaciones con tráfico masivo pueden mover los contadores a un almacén dedicado.
+
 Para ejecutar el mismo flujo contra un despliegue existente sin iniciar el servidor local:
 
 ```bash
@@ -104,9 +120,8 @@ Configura en Vercel `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `AUTH_SECRET` y la 
 
 ## Limitaciones conocidas
 
-La compilación se realiza en el navegador para evitar los límites de memoria de funciones serverless y admite un máximo de 25 MB por PDF final. El recorte de imágenes es uniforme por borde; no incluye todavía un marco gráfico de recorte libre. Las cargas directas por estudiantes quedan fuera del MVP: por ahora las registra el coordinador.
+La compilación se realiza en el navegador para evitar los límites de memoria de funciones serverless y admite hasta 250 MB por PDF final. El recorte de imágenes es uniforme por borde; no incluye todavía un marco gráfico de recorte libre. El comprobante del portal se puede copiar; no genera un PDF independiente.
 
 ## Próximas mejoras
 
-- Añadir enlaces individuales de entrega para estudiantes.
 - Añadir recorte libre con marco visual y automatizar Playwright en CI.

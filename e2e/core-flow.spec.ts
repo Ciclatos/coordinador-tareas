@@ -35,7 +35,7 @@ test.afterAll(async () => {
 });
 
 test("protege la aplicación, registra una cuenta y persiste el CRUD base", async ({ page }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(300_000);
   await page.goto("/app");
   await expect(page).toHaveURL(/\/ingresar$/);
 

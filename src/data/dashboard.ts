@@ -1,5 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
+import { decryptPortalToken } from "@/lib/submission-portal";
 
 export async function getDashboardData(userId: string) {
   const courses = await prisma.course.findMany({
@@ -63,6 +64,13 @@ export async function getDashboardData(userId: string) {
           dueAt: true,
           status: true,
           pdfOrder: true,
+          submissionPortal: {
+            select: {
+              enabled: true, opensAt: true, closesAt: true, allowLateSubmissions: true,
+              allowReplacements: true, maxReplacements: true, maxFileSize: true,
+              allowedMimeTypes: true, instructions: true, tokenCipher: true, tokenVersion: true,
+            },
+          },
           exclusions: { select: { memberId: true, reason: true } },
           sections: {
             orderBy: { sortOrder: "asc" },
@@ -91,6 +99,13 @@ export async function getDashboardData(userId: string) {
               id: true,
               status: true,
               late: true,
+              origin: true,
+              firstReceivedAt: true,
+              lastReceivedAt: true,
+              minutesLate: true,
+              reviewComment: true,
+              approvedAt: true,
+              _count: { select: { versions: true } },
               receivedAt: true,
               member: { select: { id: true, fullName: true } },
               versions: {
@@ -150,6 +165,13 @@ export async function getDashboardData(userId: string) {
     ...course,
     assignments: course.assignments.map((assignment) => ({
       ...assignment,
+      submissionPortal: assignment.submissionPortal ? {
+        ...assignment.submissionPortal,
+        token: decryptPortalToken(assignment.submissionPortal.tokenCipher),
+        tokenCipher: undefined,
+        opensAt: assignment.submissionPortal.opensAt?.toISOString() ?? null,
+        closesAt: assignment.submissionPortal.closesAt?.toISOString() ?? null,
+      } : null,
       dueAt: assignment.dueAt.toISOString(),
       weekStart: assignment.weekStart.toISOString(),
       weekEnd: assignment.weekEnd.toISOString(),
@@ -164,6 +186,9 @@ export async function getDashboardData(userId: string) {
       submissions: assignment.submissions.map((submission) => ({
         ...submission,
         receivedAt: submission.receivedAt?.toISOString() ?? null,
+        firstReceivedAt: submission.firstReceivedAt?.toISOString() ?? null,
+        lastReceivedAt: submission.lastReceivedAt?.toISOString() ?? null,
+        approvedAt: submission.approvedAt?.toISOString() ?? null,
         versions: submission.versions.map((version) => ({
           ...version,
           createdAt: version.createdAt.toISOString(),

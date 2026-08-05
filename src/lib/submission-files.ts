@@ -3,6 +3,9 @@ import { PDFDocument } from "pdf-lib";
 import sharp from "sharp";
 
 export const MAX_SUBMISSION_FILE_SIZE = 25 * 1024 * 1024;
+// Una compilación reúne varias entregas válidas de hasta 25 MB cada una.
+// Su límite debe ser independiente del límite de cada archivo de entrada.
+export const MAX_PDF_BUILD_FILE_SIZE = 250 * 1024 * 1024;
 export const ALLOWED_SUBMISSION_TYPES = [
   "application/pdf",
   "image/jpeg",
@@ -52,6 +55,7 @@ export function detectMimeType(bytes: Uint8Array): SubmissionMimeType | null {
 
 export async function inspectSubmissionStream(
   stream: ReadableStream<Uint8Array>,
+  maximumSizeInBytes = MAX_SUBMISSION_FILE_SIZE,
 ) {
   const hash = createHash("sha256");
   const reader = stream.getReader();
@@ -62,9 +66,10 @@ export async function inspectSubmissionStream(
     const { done, value } = await reader.read();
     if (done) break;
     size += value.byteLength;
-    if (size > MAX_SUBMISSION_FILE_SIZE) {
+    if (size > maximumSizeInBytes) {
       await reader.cancel("Archivo demasiado grande");
-      throw new Error("El archivo supera el límite de 25 MB.");
+      const maximumMegabytes = Math.round(maximumSizeInBytes / (1024 * 1024));
+      throw new Error(`El archivo supera el límite de ${maximumMegabytes} MB.`);
     }
     hash.update(value);
     chunks.push(value);

@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
-import { inspectSubmissionStream } from "@/lib/submission-files";
+import { inspectSubmissionStream, MAX_PDF_BUILD_FILE_SIZE } from "@/lib/submission-files";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -36,7 +36,9 @@ export async function POST(request: Request) {
   try {
     const blob = await get(expected, { access: "private", useCache: false });
     if (!blob || blob.statusCode !== 200) throw new Error("No se encontró el PDF generado.");
-    const details = await inspectSubmissionStream(blob.stream);
+    if (blob.blob.size > MAX_PDF_BUILD_FILE_SIZE)
+      throw new Error("El PDF final supera el límite de 250 MB.");
+    const details = await inspectSubmissionStream(blob.stream, MAX_PDF_BUILD_FILE_SIZE);
     if (details.mimeType !== "application/pdf" || details.size !== blob.blob.size)
       throw new Error("El archivo final no es un PDF válido.");
     const latest = await prisma.pdfBuild.aggregate({

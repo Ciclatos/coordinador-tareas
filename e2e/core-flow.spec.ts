@@ -3,6 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { PDFDocument } from "pdf-lib";
 import { del } from "@vercel/blob";
 import sharp from "sharp";
+import { randomBytes } from "node:crypto";
 
 const prisma = new PrismaClient();
 const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -196,14 +197,24 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   await shareFallback;
 
   await page.getByRole("navigation").getByRole("button", { name: "Entregas", exact: true }).click();
-  const fixture = await PDFDocument.create();
-  fixture.addPage([612, 792]);
-  const fixtureBytes = await fixture.save();
-  await page.locator('input[type="file"]').setInputFiles({
-    name: "entrega-e2e.pdf",
-    mimeType: "application/pdf",
-    buffer: Buffer.from(fixtureBytes),
-  });
+  const fixtureFiles = await Promise.all([1, 2].map(async (number) => {
+    const fixture = await PDFDocument.create();
+    const page = fixture.addPage([612, 792]);
+    const width = 2100;
+    const height = 2100;
+    const noise = randomBytes(width * height * 3);
+    const png = await sharp(noise, { raw: { width, height, channels: 3 } })
+      .png({ compressionLevel: 0 })
+      .toBuffer();
+    const image = await fixture.embedPng(png);
+    page.drawImage(image, { x: 0, y: 0, width: 612, height: 792 });
+    return {
+      name: `entrega-e2e-${number}.pdf`,
+      mimeType: "application/pdf",
+      buffer: Buffer.from(await fixture.save()),
+    };
+  }));
+  await page.locator('input[type="file"]').setInputFiles(fixtureFiles);
   await page.getByRole("button", { name: "Guardar entrega privada" }).click();
   await expect(page.getByText(/Entrega guardada como versión 1/)).toBeVisible({ timeout: 60_000 });
 
@@ -226,7 +237,13 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   await page.getByRole("navigation").getByRole("button", { name: "PDF final", exact: true }).click();
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Generar y descargar" }).click();
-  await download;
+  const finalPdf = await download;
+  const finalStream = await finalPdf.createReadStream();
+  const finalChunks: Buffer[] = [];
+  for await (const chunk of finalStream) finalChunks.push(Buffer.from(chunk));
+  const finalBytes = Buffer.concat(finalChunks);
+  expect(finalBytes.subarray(0, 5).toString()).toBe("%PDF-");
+  expect(finalBytes.byteLength).toBeGreaterThan(25 * 1024 * 1024);
   await expect(page.getByText(/PDF final generado y guardado como versión 1/)).toBeVisible({ timeout: 60_000 });
   await page.reload();
   await page.getByRole("navigation").getByRole("button", { name: "PDF final", exact: true }).click();

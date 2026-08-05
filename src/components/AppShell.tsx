@@ -231,6 +231,7 @@ export default function AppShell({
     distributionModeFromRule(currentAssignment?.sections[0]?.rule),
   );
   const [toast, setToast] = useState("");
+  const [pdfGenerating, setPdfGenerating] = useState(false);
   const defaultReport = currentAssignment
     ? reportText(
         currentAssignment.sections.map((section) => section.name),
@@ -333,10 +334,12 @@ export default function AppShell({
     }
   };
   const download = async () => {
+    if (pdfGenerating) return;
     if (!currentCourse || !currentAssignment) {
       notify("Crea una tarea antes de generar el PDF.");
       return;
     }
+    setPdfGenerating(true);
     notify("Generando documento…");
     try {
     const persistedExercises: Exercise[] = currentAssignment.sections.flatMap(
@@ -420,14 +423,12 @@ export default function AppShell({
     });
     const completion = await completed.json();
     if (!completed.ok) throw new Error(completion.error ?? "No se pudo guardar la versión final.");
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `tarea-${currentAssignment.number}-${currentCourse.name
+    const filename = `tarea-${currentAssignment.number}-${currentCourse.name
       .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
       .replace(/[^a-z0-9]+/g, "-")}.pdf`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadBlob(blob, filename);
     router.refresh();
     notify(`PDF final generado y guardado como versión ${completion.build.version}`);
     } catch (error) {
@@ -436,6 +437,8 @@ export default function AppShell({
           ? `No se pudo generar el PDF: ${error.message}`
           : "No se pudo generar el PDF.",
       );
+    } finally {
+      setPdfGenerating(false);
     }
   };
   return (
@@ -646,6 +649,7 @@ export default function AppShell({
               imageQuality={imageQuality}
               setImageQuality={setImageQuality}
               download={download}
+              generating={pdfGenerating}
               members={activeMembers}
               assignmentId={currentAssignmentId}
               reportBody={reportBody}
@@ -2385,6 +2389,7 @@ function Evaluation({ courses }: { courses: DashboardData }) {
 function PdfBuilder({
   storedFiles,
   download,
+  generating,
   members,
   assignmentId,
   reportBody,
@@ -2398,6 +2403,7 @@ function PdfBuilder({
 }: {
   storedFiles: StoredPdfSource[];
   download: () => void;
+  generating: boolean;
   members: Member[];
   assignmentId?: string;
   reportBody: string;
@@ -2433,8 +2439,8 @@ function PdfBuilder({
   return (
     <>
       <Title eyebrow="Constructor final" title="Compilar PDF">
-        <button className="primary" onClick={download} disabled={!assignmentId}>
-          <FileDown size={17} /> Generar y descargar
+        <button className="primary" onClick={download} disabled={!assignmentId || generating}>
+          <FileDown size={17} /> {generating ? "Generando PDF…" : "Generar y descargar"}
         </button>
       </Title>
       <div className="panel report-editor">

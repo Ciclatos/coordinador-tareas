@@ -46,4 +46,12 @@ describe("archivos de entregas", () => {
     const stream = new Blob(["%PDF-esto-no-es-un-pdf"]).stream();
     await expect(inspectSubmissionStream(stream)).rejects.toThrow(/dañado/);
   });
+
+  it("permite configurar un límite mayor para compilaciones finales", async () => {
+    const oversized = new Uint8Array(1024 * 1024 + 1);
+    oversized.set([0x25, 0x50, 0x44, 0x46, 0x2d]);
+    await expect(
+      inspectSubmissionStream(new Blob([oversized]).stream(), 1024 * 1024),
+    ).rejects.toThrow("límite de 1 MB");
+  });
 });

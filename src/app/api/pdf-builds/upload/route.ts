@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
-import { MAX_SUBMISSION_FILE_SIZE } from "@/lib/submission-files";
+import { MAX_PDF_BUILD_FILE_SIZE } from "@/lib/submission-files";
 
 export const runtime = "nodejs";
 
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
         if (!assignment) throw new Error("No tienes acceso a esta tarea.");
         return {
           allowedContentTypes: ["application/pdf"],
-          maximumSizeInBytes: MAX_SUBMISSION_FILE_SIZE,
+          maximumSizeInBytes: MAX_PDF_BUILD_FILE_SIZE,
           addRandomSuffix: false,
           cacheControlMaxAge: 60,
         };

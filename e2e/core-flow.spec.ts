@@ -83,10 +83,14 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   await page.getByLabel("Tema").fill("Prueba automatizada");
   await page.getByLabel("Inicio de semana").fill("2026-08-01");
   await page.getByLabel("Final de semana").fill("2026-08-07");
-  await page.getByLabel("Fecha y hora límite").fill("2027-08-08T23:59");
+  await page.getByLabel("Fecha y hora límite").fill("2027-08-08T21:00");
   await page.getByRole("button", { name: "Guardar" }).click();
   await expect(page.getByText("Tarea creada.")).toBeVisible();
   await expect(page.getByRole("heading", { name: /Distribución E2E/ })).toBeVisible();
+  await expect(page.locator(".task-row")).toContainText(/9:00\s*p\.\s*m\./i);
+  await page.getByRole("button", { name: "Editar" }).click();
+  await expect(page.getByLabel("Fecha y hora límite")).toHaveValue("2027-08-08T21:00");
+  await page.getByRole("button", { name: "Cerrar", exact: true }).click();
 
   await page
     .getByRole("navigation")

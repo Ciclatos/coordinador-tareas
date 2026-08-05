@@ -9,6 +9,7 @@ import {
   updateCourse,
   updateMember,
 } from "@/app/app/actions";
+import { formatGuatemalaDateTimeLocal } from "@/lib/guatemala-date";
 import type { DashboardData } from "@/data/dashboard";
 
 type Mode = "course" | "member" | "assignment";
@@ -243,7 +244,7 @@ export function EntityModal({
                   name="dueAt"
                   type="datetime-local"
                   required
-                  defaultValue={initial?.dueAt?.slice(0, 16)}
+                  defaultValue={formatGuatemalaDateTimeLocal(initial?.dueAt)}
                 />
               </label>
             </>

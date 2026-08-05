@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { reportText } from "@/lib/domain";
 import { parseMemberCsv } from "@/lib/member-csv";
+import { parseGuatemalaDateTimeLocal } from "@/lib/guatemala-date";
 
 export type FormState =
   | { ok?: boolean; message?: string; errors?: Record<string, string[]> }
@@ -42,7 +43,7 @@ const assignmentSchema = z.object({
   coordinatorNotes: z.string().trim().max(5000).optional(),
   weekStart: z.coerce.date(),
   weekEnd: z.coerce.date(),
-  dueAt: z.coerce.date(),
+  dueAt: z.preprocess(parseGuatemalaDateTimeLocal, z.date()),
 });
 const distributionSchema = z.object({
   assignmentId: z.string().cuid(),

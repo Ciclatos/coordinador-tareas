@@ -3,13 +3,13 @@ import { PrismaClient } from "@prisma/client";
 import { hash } from "bcryptjs";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { del } from "@vercel/blob";
-import { decryptPortalToken } from "@/lib/submission-portal";
 
 const prisma = new PrismaClient();
 const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 const email = `portal-${runId}@example.com`;
 const password = "PortalE2E-2026!";
 let courseId = "";
+let currentPortalUrl = "";
 
 test.beforeAll(async () => {
   const user = await prisma.user.create({
@@ -78,7 +78,18 @@ test.afterAll(async () => {
     where: { version: { submission: { assignment: { courseId } } } },
     select: { storageKey: true },
   });
-  await Promise.allSettled(files.map((file) => del(file.storageKey)));
+  const builds = await prisma.pdfBuild.findMany({
+    where: { assignment: { courseId }, storageKey: { not: null } },
+    select: { storageKey: true },
+  });
+  await Promise.allSettled(
+    [
+      ...files.map((file) => file.storageKey),
+      ...builds.flatMap((build) =>
+        build.storageKey ? [build.storageKey] : [],
+      ),
+    ].map((storageKey) => del(storageKey)),
+  );
   await prisma.assignment.deleteMany({ where: { courseId } });
   await prisma.course.deleteMany({ where: { id: courseId } });
   await prisma.user.deleteMany({ where: { email } });
@@ -194,10 +205,32 @@ test("portal público: identidad, entrega, corrección, reemplazo, aprobación y
   expect(stored.versions.every((version) => version.assignmentSnapshot)).toBe(
     true,
   );
+  await page.reload();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "PDF final", exact: true })
+    .click();
+  await expect(page.getByText("entrega-corregida.pdf")).toBeVisible();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Generar y descargar" }).click();
+  const finalPdf = await download;
+  const stream = await finalPdf.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const finalBytes = Buffer.concat(chunks);
+  expect(finalBytes.subarray(0, 5).toString()).toBe("%PDF-");
+  expect((await PDFDocument.load(finalBytes)).getPageCount()).toBeGreaterThan(
+    3,
+  );
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Entregas", exact: true })
+    .click();
   const oldUrl = portalUrl;
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Regenerar" }).click();
-  await page.waitForTimeout(1000);
+  await expect(page.getByLabel("Enlace público")).not.toHaveValue(oldUrl);
+  currentPortalUrl = await page.getByLabel("Enlace público").inputValue();
   const revoked = await browser.newPage();
   await revoked.goto(oldUrl);
   await expect(revoked.getByText("Enlace inválido")).toBeVisible();
@@ -212,7 +245,7 @@ test("portal público: desactivado, cerrado, tardías e integrante excluido", as
     include: { submissionPortal: true, course: { include: { members: true } } },
   });
   const portal = assignment.submissionPortal!;
-  const url = `/entregar/${decryptPortalToken(portal.tokenCipher)}`;
+  const url = new URL(currentPortalUrl).pathname;
   await prisma.assignmentSubmissionPortal.update({
     where: { id: portal.id },
     data: { enabled: false },

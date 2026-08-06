@@ -1,12 +1,26 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { Copy, ExternalLink, Link2, RefreshCw, Share2 } from "lucide-react";
+import {
+  CheckCircle2,
+  Copy,
+  ExternalLink,
+  Link2,
+  MessageSquareWarning,
+  RefreshCw,
+  Share2,
+  XCircle,
+} from "lucide-react";
 import {
   regenerateSubmissionPortal,
   reviewSubmission,
   saveSubmissionPortal,
 } from "@/app/app/portal-actions";
+import {
+  submissionOriginLabel,
+  submissionStatusLabel,
+  submissionVersionLabel,
+} from "@/lib/submission-presentation";
 
 type Portal = {
   enabled: boolean;
@@ -19,7 +33,8 @@ type Portal = {
   allowedMimeTypes: unknown;
   instructions: string | null;
   tokenVersion: number;
-  token: string;
+  token: string | null;
+  tokenIssue: string | null;
 } | null;
 type Submission = {
   id: string;
@@ -27,6 +42,7 @@ type Submission = {
   late: boolean;
   origin: string;
   reviewComment: string | null;
+  dataIssue: string | null;
   member: { fullName: string };
   _count: { versions: number };
   versions: {
@@ -85,6 +101,12 @@ export default function PortalManager({
       "Suba un único archivo PDF legible con todos los ejercicios asignados.",
   );
   const [message, setMessage] = useState("");
+  const [reviewDialog, setReviewDialog] = useState<null | {
+    submissionId: string;
+    status: "NEEDS_CORRECTION" | "REJECTED";
+    memberName: string;
+  }>(null);
+  const [reviewReason, setReviewReason] = useState("");
   const [busy, start] = useTransition();
   useEffect(() => {
     const timer = window.setInterval(refresh, 30_000);
@@ -157,8 +179,32 @@ export default function PortalManager({
     }
   };
   const shareText = `Hola, compañeros. Les comparto el enlace para entregar la Tarea ${assignment.number} de ${assignment.courseName}:\n\n${url}\n\nAl ingresar:\n1. Seleccionen su nombre.\n2. Confirmen su carné.\n3. Revisen sus ejercicios asignados.\n4. Suban un único archivo PDF legible.\n\nFecha límite: ${new Intl.DateTimeFormat("es-GT", { dateStyle: "medium", timeStyle: "short", timeZone: "America/Guatemala" }).format(new Date(assignment.dueAt))}.\n\nPor favor, verifiquen el archivo antes de enviarlo.`;
+  const applyReview = (
+    submissionId: string,
+    status: "APPROVED" | "NEEDS_CORRECTION" | "REJECTED",
+    comment?: string,
+  ) =>
+    start(async () => {
+      try {
+        const result = await reviewSubmission({
+          submissionId,
+          status,
+          comment,
+        });
+        setMessage(result.message);
+        setReviewDialog(null);
+        setReviewReason("");
+        refresh();
+      } catch (error) {
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : "No se pudo actualizar la entrega.",
+        );
+      }
+    });
   return (
-    <section className="panel portal-manager">
+    <section className="panel portal-manager" data-tutorial="submission-portal">
       <div className="panel-head">
         <div>
           <h3>
@@ -325,6 +371,11 @@ export default function PortalManager({
         )}
       </div>
       {url && <input aria-label="Enlace público" readOnly value={url} />}{" "}
+      {portal?.tokenIssue && (
+        <div className="notice warning">
+          {portal.tokenIssue} Use “Regenerar” para crear un enlace válido.
+        </div>
+      )}
       {message && <div className="notice">{message}</div>}{" "}
       {assignment.submissions
         .filter((item) => item.origin === "PORTAL")
@@ -332,58 +383,149 @@ export default function PortalManager({
           <div className="portal-review" key={submission.id}>
             <span>
               <b>{submission.member.fullName}</b>
+              <span
+                className={`submission-status status-${submission.status.toLowerCase()}`}
+              >
+                {submissionStatusLabel(submission.status, submission.late)}
+              </span>
               <small>
-                {submission.status} · {submission._count.versions} versión(es) ·{" "}
-                {submission.origin}
+                {submissionVersionLabel(submission._count.versions)} ·{" "}
+                {submissionOriginLabel(submission.origin)}
               </small>
               {submission.reviewComment && (
                 <small>{submission.reviewComment}</small>
               )}
+              {submission.dataIssue && (
+                <small className="submission-data-issue" role="alert">
+                  {submission.dataIssue}
+                </small>
+              )}
             </span>
-            <button
-              onClick={() =>
-                start(async () => {
-                  await reviewSubmission({
+            <div
+              className="submission-review-actions"
+              data-tutorial="submission-review"
+            >
+              <button
+                className="review-approve"
+                title="Marcar esta entrega como aprobada"
+                disabled={busy}
+                onClick={() => applyReview(submission.id, "APPROVED")}
+              >
+                <CheckCircle2 /> Aprobar
+              </button>
+              <button
+                className="review-correct"
+                title="Enviar observaciones y solicitar una nueva versión"
+                disabled={busy}
+                onClick={() => {
+                  setReviewReason("");
+                  setReviewDialog({
                     submissionId: submission.id,
-                    status: "APPROVED",
+                    status: "NEEDS_CORRECTION",
+                    memberName: submission.member.fullName,
                   });
-                  refresh();
-                })
-              }
-            >
-              Aprobar
-            </button>
-            <button
-              onClick={() => {
-                const comment = prompt("Comentario de corrección:");
-                if (comment)
-                  start(async () => {
-                    await reviewSubmission({
-                      submissionId: submission.id,
-                      status: "NEEDS_CORRECTION",
-                      comment,
-                    });
-                    refresh();
-                  });
-              }}
-            >
-              Solicitar corrección
-            </button>
-            <button
-              onClick={() =>
-                start(async () => {
-                  await reviewSubmission({
+                }}
+              >
+                <MessageSquareWarning /> Solicitar corrección
+              </button>
+              <button
+                className="review-reject"
+                title="Rechazar esta entrega"
+                disabled={busy}
+                onClick={() => {
+                  setReviewReason("");
+                  setReviewDialog({
                     submissionId: submission.id,
                     status: "REJECTED",
+                    memberName: submission.member.fullName,
                   });
-                  refresh();
-                })
-              }
-            >
-              Rechazar
-            </button>
+                }}
+              >
+                <XCircle /> Rechazar
+              </button>
+            </div>
           </div>
         ))}
+      {reviewDialog && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target && !busy)
+              setReviewDialog(null);
+          }}
+        >
+          <section
+            className={`review-modal ${reviewDialog.status === "REJECTED" ? "destructive" : "warning"}`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="review-dialog-title"
+          >
+            <button
+              className="modal-close"
+              aria-label="Cerrar"
+              disabled={busy}
+              onClick={() => setReviewDialog(null)}
+            >
+              <XCircle />
+            </button>
+            <h2 id="review-dialog-title">
+              {reviewDialog.status === "REJECTED"
+                ? "Rechazar entrega"
+                : "Solicitar corrección"}
+            </h2>
+            <p>
+              {reviewDialog.status === "REJECTED"
+                ? `Esta acción marcará la entrega de ${reviewDialog.memberName} como rechazada.`
+                : `Indique a ${reviewDialog.memberName} qué debe corregir antes de enviar otra versión.`}
+            </p>
+            <label>
+              Observaciones obligatorias
+              <textarea
+                autoFocus
+                rows={5}
+                value={reviewReason}
+                onChange={(event) => setReviewReason(event.target.value)}
+                placeholder={
+                  reviewDialog.status === "REJECTED"
+                    ? "Explique claramente el motivo del rechazo…"
+                    : "Describa los cambios que debe realizar…"
+                }
+              />
+            </label>
+            <div className="review-modal-actions">
+              <button
+                className="outline"
+                disabled={busy}
+                onClick={() => setReviewDialog(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                className={
+                  reviewDialog.status === "REJECTED"
+                    ? "review-reject"
+                    : "review-correct"
+                }
+                disabled={busy || reviewReason.trim().length < 3}
+                onClick={() =>
+                  applyReview(
+                    reviewDialog.submissionId,
+                    reviewDialog.status,
+                    reviewReason,
+                  )
+                }
+              >
+                {busy
+                  ? "Procesando…"
+                  : reviewDialog.status === "REJECTED"
+                    ? "Confirmar rechazo"
+                    : "Enviar solicitud de corrección"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </section>
   );
 }

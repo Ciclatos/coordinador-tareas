@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import {
+  createPortalCredentials,
   createReceiptCode,
   decryptPortalToken,
   encryptPortalToken,
@@ -35,6 +36,13 @@ describe("seguridad del portal público", () => {
     const encrypted = encryptPortalToken(token);
     expect(encrypted).not.toContain(token);
     expect(decryptPortalToken(encrypted)).toBe(token);
+  });
+
+  it("construye credenciales completas para create aunque el upsert termine actualizando", () => {
+    const credentials = createPortalCredentials();
+    expect(credentials.token).toBeTruthy();
+    expect(credentials.tokenHash).toBe(hashPortalToken(credentials.token));
+    expect(decryptPortalToken(credentials.tokenCipher)).toBe(credentials.token);
   });
 
   it("crea referencias públicas sin exponer IDs internos", () => {

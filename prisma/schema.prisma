@@ -33,13 +33,39 @@ enum FileKind {
   IMAGE
 }
 
+enum TutorialStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
+}
+
 model User {
-  id           String       @id @default(cuid())
-  email        String       @unique
-  passwordHash String?
-  createdAt    DateTime     @default(now())
-  profile      UserProfile?
-  courses      Course[]
+  id               String                 @id @default(cuid())
+  email            String                 @unique
+  passwordHash     String?
+  createdAt        DateTime               @default(now())
+  tutorialEligible Boolean                @default(false)
+  profile          UserProfile?
+  courses          Course[]
+  tutorialProgress UserTutorialProgress[]
+}
+
+model UserTutorialProgress {
+  id              String         @id @default(cuid())
+  userId          String
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tutorialKey     String
+  status          TutorialStatus @default(NOT_STARTED)
+  currentStep     Int?
+  tutorialVersion Int            @default(1)
+  startedAt       DateTime?
+  completedAt     DateTime?
+  skippedAt       DateTime?
+  updatedAt       DateTime       @updatedAt
+
+  @@unique([userId, tutorialKey])
+  @@index([userId, status])
 }
 
 model UserProfile {

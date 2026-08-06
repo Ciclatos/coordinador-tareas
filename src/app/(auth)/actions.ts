@@ -22,6 +22,7 @@ export async function register(
     data: {
       email: parsed.data.email,
       passwordHash,
+      tutorialEligible: true,
       profile: { create: { name: parsed.data.name } },
     },
     select: { id: true },

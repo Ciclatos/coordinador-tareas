@@ -5,6 +5,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import {
+  createPortalCredentials,
   encryptPortalToken,
   generatePortalToken,
   hashPortalToken,
@@ -46,13 +47,15 @@ export async function saveSubmissionPortal(
   const previous = await prisma.assignmentSubmissionPortal.findUnique({
     where: { assignmentId: data.assignmentId },
   });
-  const rawToken = previous ? null : generatePortalToken();
+  // Prisma evalúa también el objeto `create` de un upsert que terminará en
+  // `update`. El token debe ser siempre válido aunque el portal ya exista.
+  const credentials = createPortalCredentials();
   const portal = await prisma.assignmentSubmissionPortal.upsert({
     where: { assignmentId: data.assignmentId },
     create: {
       assignmentId: data.assignmentId,
-      tokenHash: hashPortalToken(rawToken!),
-      tokenCipher: encryptPortalToken(rawToken!),
+      tokenHash: credentials.tokenHash,
+      tokenCipher: credentials.tokenCipher,
       enabled: data.enabled,
       opensAt: data.opensAt ? new Date(data.opensAt) : null,
       closesAt: data.closesAt ? new Date(data.closesAt) : null,
@@ -119,18 +122,36 @@ export async function reviewSubmission(input: {
   status: "APPROVED" | "NEEDS_CORRECTION" | "REJECTED" | "REVIEWING";
   comment?: string;
 }) {
+  const parsed = z
+    .object({
+      submissionId: z.string().cuid(),
+      status: z.enum(["APPROVED", "NEEDS_CORRECTION", "REJECTED", "REVIEWING"]),
+      comment: z.string().trim().min(3).max(2000).optional(),
+    })
+    .superRefine((value, context) => {
+      if (
+        ["NEEDS_CORRECTION", "REJECTED"].includes(value.status) &&
+        !value.comment
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["comment"],
+          message: "Escriba un motivo antes de continuar.",
+        });
+    })
+    .parse(input);
   const { userId } = await requireSession();
   const submission = await prisma.submission.findFirst({
-    where: { id: input.submissionId, assignment: { course: { userId } } },
+    where: { id: parsed.submissionId, assignment: { course: { userId } } },
     select: { id: true, assignmentId: true, memberId: true },
   });
   if (!submission) throw new Error("Entrega no encontrada.");
   await prisma.submission.update({
     where: { id: submission.id },
     data: {
-      status: input.status,
-      reviewComment: input.comment?.trim() || null,
-      approvedAt: input.status === "APPROVED" ? new Date() : null,
+      status: parsed.status,
+      reviewComment: parsed.comment || null,
+      approvedAt: parsed.status === "APPROVED" ? new Date() : null,
     },
   });
   await prisma.submissionAuditEvent.create({
@@ -139,12 +160,22 @@ export async function reviewSubmission(input: {
       submissionId: submission.id,
       memberId: submission.memberId,
       eventType:
-        input.status === "NEEDS_CORRECTION"
+        parsed.status === "NEEDS_CORRECTION"
           ? "CORRECTION_REQUESTED"
-          : `SUBMISSION_${input.status}`,
-      metadata: input.comment ? { hasComment: true } : undefined,
+          : `SUBMISSION_${parsed.status}`,
+      metadata: parsed.comment ? { hasComment: true } : undefined,
     },
   });
   revalidatePath("/app");
-  return { ok: true };
+  return {
+    ok: true,
+    message:
+      parsed.status === "APPROVED"
+        ? "Entrega aprobada correctamente."
+        : parsed.status === "NEEDS_CORRECTION"
+          ? "Solicitud de corrección enviada."
+          : parsed.status === "REJECTED"
+            ? "Entrega rechazada."
+            : "Entrega actualizada.",
+  };
 }

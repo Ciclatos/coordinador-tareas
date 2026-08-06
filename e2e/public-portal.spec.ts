@@ -121,6 +121,9 @@ test("portal público: identidad, entrega, corrección, reemplazo, aprobación y
     .click();
   const portalUrl = await page.getByLabel("Enlace público").inputValue();
   expect(portalUrl).toMatch(/\/entregar\/[A-Za-z0-9_-]{40,}/);
+  await page.getByRole("button", { name: "Guardar y generar enlace" }).click();
+  await expect(page.getByText("Portal guardado correctamente.")).toBeVisible();
+  await expect(page.getByLabel("Enlace público")).toHaveValue(portalUrl);
 
   const student = await browser.newContext();
   const studentPage = await student.newPage();
@@ -167,9 +170,16 @@ test("portal público: identidad, entrega, corrección, reemplazo, aprobación y
       .locator(".portal-review")
       .getByText("Carlos Eduardo Díaz García", { exact: true }),
   ).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept("Corrija la página 1."));
   await page.getByRole("button", { name: "Solicitar corrección" }).click();
-  await page.waitForTimeout(1000);
+  await page
+    .getByLabel("Observaciones obligatorias")
+    .fill("Corrija la página 1.");
+  await page
+    .getByRole("button", { name: "Enviar solicitud de corrección" })
+    .click();
+  await expect(
+    page.getByText("Solicitud de corrección enviada."),
+  ).toBeVisible();
   await student.close();
 
   const returning = await browser.newContext();
@@ -194,7 +204,32 @@ test("portal público: identidad, entrega, corrección, reemplazo, aprobación y
     .getByRole("button", { name: "Entregas", exact: true })
     .click();
   await page.getByRole("button", { name: "Aprobar" }).click();
-  await page.waitForTimeout(1000);
+  await expect(page.getByText("Entrega aprobada correctamente.")).toBeVisible();
+  await expect(
+    page.locator(".portal-review").getByText("Aprobado", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Rechazar" }).click();
+  await expect(
+    page.getByRole("button", { name: "Confirmar rechazo" }),
+  ).toBeDisabled();
+  await page
+    .getByLabel("Observaciones obligatorias")
+    .fill("El archivo no corresponde a la asignación.");
+  await page.getByRole("button", { name: "Confirmar rechazo" }).click();
+  await expect(page.getByText("Entrega rechazada.")).toBeVisible();
+  await expect(
+    page.locator(".portal-review").getByText("Rechazado", { exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Entregas", exact: true })
+    .click();
+  await expect(
+    page.locator(".portal-review").getByText("Rechazado", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Aprobar" }).click();
+  await expect(page.getByText("Entrega aprobada correctamente.")).toBeVisible();
   const stored = await prisma.submission.findFirstOrThrow({
     where: { assignment: { courseId } },
     include: { versions: { include: { files: true } } },

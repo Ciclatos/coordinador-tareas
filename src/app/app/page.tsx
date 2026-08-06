@@ -2,12 +2,17 @@ import AppShell from "@/components/AppShell";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { getDashboardData } from "@/data/dashboard";
+import type { TutorialProgressDto } from "@/lib/tutorial-progress";
 export default async function DashboardPage() {
   const { userId } = await requireSession();
   const user = await prisma.user.findUniqueOrThrow({
     where: { id: userId },
     select: {
       email: true,
+      tutorialEligible: true,
+      tutorialProgress: {
+        select: { tutorialKey: true, status: true, currentStep: true, tutorialVersion: true },
+      },
       profile: {
         select: {
           name: true,
@@ -25,6 +30,8 @@ export default async function DashboardPage() {
   return (
     <AppShell
       initialData={data}
+      tutorialEligible={user.tutorialEligible}
+      tutorialProgress={user.tutorialProgress as TutorialProgressDto[]}
       currentUser={{
         name: user.profile?.name ?? user.email,
         systemName: user.profile?.systemName ?? "Coordinador de Tareas",

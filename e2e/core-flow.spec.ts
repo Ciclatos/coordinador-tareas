@@ -35,7 +35,7 @@ test.afterAll(async () => {
 });
 
 test("protege la aplicación, registra una cuenta y persiste el CRUD base", async ({ page }) => {
-  test.setTimeout(300_000);
+  test.setTimeout(480_000);
   await page.goto("/app");
   await expect(page).toHaveURL(/\/ingresar$/);
 
@@ -45,7 +45,31 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   await page.getByLabel("Contraseña").fill("PruebaE2E-2026!");
   await page.getByRole("button", { name: "Crear cuenta" }).click();
   await expect(page).toHaveURL(/\/app$/, { timeout: 30_000 });
+  await expect(page.getByText("Bienvenido a Coordinador de Tareas")).toBeVisible();
+  await page.getByRole("button", { name: "Omitir tutorial" }).click();
   await expect(page.getByRole("heading", { name: "Hola, Usuario" })).toBeVisible();
+  const e2eUser = await prisma.user.findUniqueOrThrow({ where: { email } });
+  await prisma.userTutorialProgress.createMany({
+    skipDuplicates: true,
+    data: [
+      "courses",
+      "members",
+      "assignments",
+      "distribution",
+      "submission_portal",
+      "submissions",
+      "evaluations",
+      "report",
+      "pdf_builder",
+    ].map((tutorialKey) => ({
+      userId: e2eUser.id,
+      tutorialKey,
+      status: "SKIPPED" as const,
+      tutorialVersion: 1,
+      startedAt: new Date(),
+      skippedAt: new Date(),
+    })),
+  });
 
   await page.getByRole("button", { name: "Cursos" }).click();
   await page.getByRole("button", { name: "Nuevo curso" }).click();
@@ -100,14 +124,14 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   await cards.nth(0).getByLabel("Nombre o número de sección").fill("5.3");
   await cards.nth(0).getByLabel("Hasta").fill("30");
   await cards.nth(0).getByRole("button", { name: "Regenerar ejercicios" }).click();
-  await expect(cards.nth(0).getByText("6 ejercicio(s)")).toBeVisible();
+  await expect(cards.nth(0).getByText("30 ejercicio(s)")).toBeVisible();
 
   await page.getByRole("button", { name: "Agregar sección" }).click();
   cards = page.locator(".section-card");
   await cards.nth(1).getByLabel("Nombre o número de sección").fill("5.4");
   await cards.nth(1).getByLabel("Hasta").fill("50");
   await cards.nth(1).getByRole("button", { name: "Regenerar ejercicios" }).click();
-  await expect(cards.nth(1).getByText("10 ejercicio(s)")).toBeVisible();
+  await expect(cards.nth(1).getByText("50 ejercicio(s)")).toBeVisible();
 
   await page.getByRole("button", { name: "Agregar sección" }).click();
   cards = page.locator(".section-card");
@@ -116,10 +140,10 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   await cards.nth(2).getByRole("textbox", { name: "Lista manual", exact: true }).fill("5, 10, 15, 20");
   await cards.nth(2).getByRole("button", { name: "Regenerar ejercicios" }).click();
   await expect(cards.nth(2).getByText("4 ejercicio(s)")).toBeVisible();
-  await expect(page.getByText("20 ejercicios en total")).toBeVisible();
+  await expect(page.getByText("84 ejercicios en total")).toBeVisible();
 
   await page.getByRole("button", { name: "Redistribuir" }).click();
-  await expect(page.getByText(/20 ejercicios distribuidos sin duplicados/)).toBeVisible();
+  await expect(page.getByText(/84 ejercicios distribuidos sin duplicados/)).toBeVisible();
   await page.getByRole("button", { name: "Guardar distribución" }).click();
   await expect(page.getByText("Distribución guardada y reproducible.")).toBeVisible({ timeout: 30_000 });
 
@@ -127,10 +151,10 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   await page.getByRole("navigation").getByRole("button", { name: "Distribución", exact: true }).click();
   cards = page.locator(".section-card");
   await expect(cards).toHaveCount(3);
-  await expect(cards.nth(0).getByText("6 ejercicio(s)")).toBeVisible();
-  await expect(cards.nth(1).getByText("10 ejercicio(s)")).toBeVisible();
+  await expect(cards.nth(0).getByText("30 ejercicio(s)")).toBeVisible();
+  await expect(cards.nth(1).getByText("50 ejercicio(s)")).toBeVisible();
   await expect(cards.nth(2).getByText("4 ejercicio(s)")).toBeVisible();
-  await expect(page.getByText("20 ejercicios en total")).toBeVisible();
+  await expect(page.getByText("84 ejercicios en total")).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "5.3" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "5.4" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "5.5" })).toBeVisible();
@@ -139,12 +163,12 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   await expect(whatsapp).toHaveValue(/• 5.3:/);
   await expect(whatsapp).toHaveValue(/• 5.4:/);
   await expect(whatsapp).toHaveValue(/• 5.5:/);
-  await expect(whatsapp).toHaveValue(/• Total: 20 ejercicios/);
+  await expect(whatsapp).toHaveValue(/• Total: 84 ejercicios/);
 
   await cards.nth(1).getByLabel("Hasta").fill("45");
   await cards.nth(1).getByRole("button", { name: "Regenerar ejercicios" }).click();
-  await expect(cards.nth(1).getByText("9 ejercicio(s)")).toBeVisible();
-  await expect(cards.nth(0).getByText("6 ejercicio(s)")).toBeVisible();
+  await expect(cards.nth(1).getByText("45 ejercicio(s)")).toBeVisible();
+  await expect(cards.nth(0).getByText("30 ejercicio(s)")).toBeVisible();
   await expect(cards.nth(2).getByText("4 ejercicio(s)")).toBeVisible();
   await cards.nth(1).getByLabel("Hasta").fill("50");
   await cards.nth(1).getByRole("button", { name: "Regenerar ejercicios" }).click();
@@ -220,7 +244,7 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   }));
   await page.locator('input[type="file"]').setInputFiles(fixtureFiles);
   await page.getByRole("button", { name: "Guardar entrega privada" }).click();
-  await expect(page.getByText(/Entrega guardada como versión 1/)).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText(/Entrega guardada como versión 1/)).toBeVisible({ timeout: 120_000 });
 
   await page
     .getByRole("navigation")

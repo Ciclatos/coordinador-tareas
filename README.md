@@ -22,10 +22,13 @@ Aplicación web en español para coordinar tareas grupales universitarias: defin
 - Reporte determinista persistido, regenerable desde datos actuales y editable, sin depender de una API de IA.
 - PDF final mediante `pdf-lib`: portada, desempeño, evaluación detallada, resumen, carátula con logo, integrantes, entregas y numeración. Incluye miniaturas PDF.js, selección de páginas, rotación, recorte de imágenes, drag and drop, compresión y versiones privadas descargables.
 - Autenticación por correo y contraseña, sesiones firmadas y persistencia multiusuario en Lakebase Postgres (Neon) mediante Prisma.
+- Onboarding guiado en español con tutorial general, recorridos contextuales por módulo, centro de ayuda, repetición y progreso sincronizado entre dispositivos.
 
 ## Arquitectura
 
 La interfaz usa Next.js App Router y TypeScript estricto. `src/lib/domain.ts` contiene reglas puras y testeables; `src/lib/pdf.ts` compone el documento en el navegador para evitar límites de memoria serverless; Prisma persiste los modelos en Lakebase Postgres. Las rutas de servidor comprueban la sesión y la propiedad del curso antes de operar. Las cargas van directamente del navegador a Blob mediante un token limitado y después se verifican y registran en una transacción.
+
+Los recorridos usan Driver.js 1.8: tiene una huella pequeña, tipos TypeScript, soporte para objetivos dinámicos o ausentes, teclado y una API desacoplada de la versión de React. El contenido tipado y versionado vive en `src/tutorials/tutorialDefinitions.ts`; los componentes solo exponen selectores estables `data-tutorial`. La tabla `UserTutorialProgress` es la fuente de verdad y permite continuar el progreso en otro dispositivo. Las cuentas creadas después de esta función reciben el tutorial general una sola vez; a cuentas anteriores se les muestra únicamente una invitación discreta.
 
 ## Desarrollo local
 
@@ -77,7 +80,13 @@ npm run build
 npm run check
 ```
 
-Las pruebas unitarias cubren reglas de ejercicios, reinicio por sección, números repetidos entre secciones, distribución determinista, historial, exclusiones, bloqueos, pesos, notas, reporte, autenticación, protección de rutas, selección de páginas y firmas reales de archivos. `npm run test:e2e` ejecuta el flujo Playwright de registro, curso, integrante, tarea, distribución, evaluación y persistencia tras recargar.
+Las pruebas unitarias cubren reglas de ejercicios, reinicio por sección, números repetidos entre secciones, distribución determinista, historial, exclusiones, bloqueos, pesos, notas, reporte, autenticación, protección de rutas, DTOs seguros de entregas, presentación traducida, tutoriales, selección de páginas y firmas reales de archivos. `npm run test:e2e` ejecuta los flujos Playwright de registro, onboarding, curso, integrante, tarea, distribución, portal público, revisión de entregas, evaluación y persistencia tras recargar.
+
+## Ayuda y tutoriales
+
+El área privada incluye los recorridos **Primeros pasos**, **Cursos**, **Integrantes**, **Tareas**, **Distribución**, **Portal de entrega**, **Entregas**, **Evaluación**, **Reporte** y **PDF final**. Cada módulo ofrece **Ver tutorial** y el centro **Ayuda y tutoriales** permite continuar, repetir o reiniciar recorridos. Omitir o completar impide que el tutorial reaparezca automáticamente; repetir un recorrido completado no borra ese estado.
+
+Los recorridos omiten de forma segura objetivos que aún no existen y se adaptan a escritorio y teléfono. Escape cierra el recorrido, el foco queda dentro del popover y `prefers-reduced-motion` desactiva animaciones. El portal público `/entregar/[token]`, autenticación y páginas de error nunca montan el sistema de tutoriales.
 
 ## Portal público de entregas
 

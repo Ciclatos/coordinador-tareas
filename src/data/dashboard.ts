@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { decryptPortalToken } from "@/lib/submission-portal";
+import { submissionDataIssue } from "@/lib/submission-dto";
 
 export async function getDashboardData(userId: string) {
   const courses = await prisma.course.findMany({
@@ -66,9 +67,18 @@ export async function getDashboardData(userId: string) {
           pdfOrder: true,
           submissionPortal: {
             select: {
-              enabled: true, opensAt: true, closesAt: true, allowLateSubmissions: true,
-              allowReplacements: true, maxReplacements: true, maxFileSize: true,
-              allowedMimeTypes: true, instructions: true, tokenCipher: true, tokenVersion: true,
+              id: true,
+              enabled: true,
+              opensAt: true,
+              closesAt: true,
+              allowLateSubmissions: true,
+              allowReplacements: true,
+              maxReplacements: true,
+              maxFileSize: true,
+              allowedMimeTypes: true,
+              instructions: true,
+              tokenCipher: true,
+              tokenVersion: true,
             },
           },
           exclusions: { select: { memberId: true, reason: true } },
@@ -139,7 +149,9 @@ export async function getDashboardData(userId: string) {
                 select: {
                   score: true,
                   reason: true,
-                  criterion: { select: { name: true, maxScore: true, sortOrder: true } },
+                  criterion: {
+                    select: { name: true, maxScore: true, sortOrder: true },
+                  },
                 },
                 orderBy: { criterion: { sortOrder: "asc" } },
               },
@@ -148,13 +160,23 @@ export async function getDashboardData(userId: string) {
           reports: {
             orderBy: { createdAt: "desc" },
             take: 1,
-            select: { id: true, body: true, generatorVersion: true, createdAt: true },
+            select: {
+              id: true,
+              body: true,
+              generatorVersion: true,
+              createdAt: true,
+            },
           },
           pdfBuilds: {
             where: { status: "READY", storageKey: { not: null } },
             orderBy: { version: "desc" },
             take: 10,
-            select: { id: true, version: true, sizeBytes: true, createdAt: true },
+            select: {
+              id: true,
+              version: true,
+              sizeBytes: true,
+              createdAt: true,
+            },
           },
           _count: { select: { sections: true, submissions: true } },
         },
@@ -165,13 +187,9 @@ export async function getDashboardData(userId: string) {
     ...course,
     assignments: course.assignments.map((assignment) => ({
       ...assignment,
-      submissionPortal: assignment.submissionPortal ? {
-        ...assignment.submissionPortal,
-        token: decryptPortalToken(assignment.submissionPortal.tokenCipher),
-        tokenCipher: undefined,
-        opensAt: assignment.submissionPortal.opensAt?.toISOString() ?? null,
-        closesAt: assignment.submissionPortal.closesAt?.toISOString() ?? null,
-      } : null,
+      submissionPortal: assignment.submissionPortal
+        ? serializePortal(assignment.id, assignment.submissionPortal)
+        : null,
       dueAt: assignment.dueAt.toISOString(),
       weekStart: assignment.weekStart.toISOString(),
       weekEnd: assignment.weekEnd.toISOString(),
@@ -189,6 +207,11 @@ export async function getDashboardData(userId: string) {
         firstReceivedAt: submission.firstReceivedAt?.toISOString() ?? null,
         lastReceivedAt: submission.lastReceivedAt?.toISOString() ?? null,
         approvedAt: submission.approvedAt?.toISOString() ?? null,
+        dataIssue: submissionDataIssue({
+          status: submission.status,
+          versionCount: submission._count.versions,
+          currentVersion: submission.versions[0],
+        }),
         versions: submission.versions.map((version) => ({
           ...version,
           createdAt: version.createdAt.toISOString(),
@@ -196,6 +219,61 @@ export async function getDashboardData(userId: string) {
       })),
     })),
   }));
+}
+
+function serializePortal(
+  assignmentId: string,
+  portal: {
+    id: string;
+    enabled: boolean;
+    opensAt: Date | null;
+    closesAt: Date | null;
+    allowLateSubmissions: boolean;
+    allowReplacements: boolean;
+    maxReplacements: number;
+    maxFileSize: number;
+    allowedMimeTypes: unknown;
+    instructions: string | null;
+    tokenCipher: string;
+    tokenVersion: number;
+  },
+) {
+  let token: string | null = null;
+  let tokenIssue: string | null = null;
+  try {
+    token = decryptPortalToken(portal.tokenCipher);
+  } catch (error) {
+    tokenIssue =
+      "El enlace guardado no puede recuperarse; regenérelo para continuar.";
+    console.error(
+      "[dashboard:submission-portal] No se pudo descifrar el token",
+      {
+        assignmentId,
+        portalId: portal.id,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      },
+    );
+  }
+  const allowedMimeTypes = Array.isArray(portal.allowedMimeTypes)
+    ? portal.allowedMimeTypes.filter(
+        (value): value is string => typeof value === "string",
+      )
+    : ["application/pdf"];
+  return {
+    id: portal.id,
+    enabled: portal.enabled,
+    opensAt: portal.opensAt?.toISOString() ?? null,
+    closesAt: portal.closesAt?.toISOString() ?? null,
+    allowLateSubmissions: portal.allowLateSubmissions,
+    allowReplacements: portal.allowReplacements,
+    maxReplacements: portal.maxReplacements,
+    maxFileSize: portal.maxFileSize,
+    allowedMimeTypes,
+    instructions: portal.instructions,
+    tokenVersion: portal.tokenVersion,
+    token,
+    tokenIssue,
+  };
 }
 
 export type DashboardData = Awaited<ReturnType<typeof getDashboardData>>;

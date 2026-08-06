@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState, useTransition } from "react";
+import { Component, useMemo, useState, useTransition } from "react";
 import { upload } from "@vercel/blob/client";
 import { useRouter } from "next/navigation";
 import {
@@ -37,6 +37,8 @@ import type { DashboardData } from "@/data/dashboard";
 import { EntityModal, type EditableEntity } from "@/components/EntityModal";
 import { PdfPageThumbnails } from "@/components/PdfPageThumbnails";
 import PortalManager from "@/components/PortalManager";
+import TutorialSystem from "@/components/TutorialSystem";
+import type { TutorialProgressDto } from "@/lib/tutorial-progress";
 import {
   copyMembers,
   importMembersCsv,
@@ -64,6 +66,7 @@ import {
   duplicateLabels,
   emptySection,
   generateSectionLabels,
+  sectionRangeValid,
   sectionFromStored,
   type SectionConfig,
 } from "@/lib/section-config";
@@ -91,22 +94,45 @@ type ModalState = {
   mode: "course" | "member" | "assignment";
   initial?: EditableEntity;
 };
-type PdfPreference = { fileId: string; sortOrder: number; selectedPages?: number[]; cropPercent?: number };
+type PdfPreference = {
+  fileId: string;
+  sortOrder: number;
+  selectedPages?: number[];
+  cropPercent?: number;
+};
 function pdfPreferences(value: unknown): PdfPreference[] {
   const items = Array.isArray(value)
     ? value
-    : value && typeof value === "object" && Array.isArray((value as Record<string, unknown>).items)
+    : value &&
+        typeof value === "object" &&
+        Array.isArray((value as Record<string, unknown>).items)
       ? ((value as Record<string, unknown>).items as unknown[])
       : [];
   return items.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
     const candidate = item as Record<string, unknown>;
-    if (typeof candidate.fileId !== "string" || typeof candidate.sortOrder !== "number") return [];
+    if (
+      typeof candidate.fileId !== "string" ||
+      typeof candidate.sortOrder !== "number"
+    )
+      return [];
     const selectedPages = Array.isArray(candidate.selectedPages)
-      ? candidate.selectedPages.filter((page): page is number => Number.isInteger(page) && page >= 0)
+      ? candidate.selectedPages.filter(
+          (page): page is number => Number.isInteger(page) && page >= 0,
+        )
       : undefined;
-    const cropPercent = typeof candidate.cropPercent === "number" ? candidate.cropPercent : undefined;
-    return [{ fileId: candidate.fileId, sortOrder: candidate.sortOrder, selectedPages, cropPercent }];
+    const cropPercent =
+      typeof candidate.cropPercent === "number"
+        ? candidate.cropPercent
+        : undefined;
+    return [
+      {
+        fileId: candidate.fileId,
+        sortOrder: candidate.sortOrder,
+        selectedPages,
+        cropPercent,
+      },
+    ];
   });
 }
 type ImageQuality = "high" | "balanced" | "compact";
@@ -128,7 +154,12 @@ function pdfImageQuality(value: unknown): ImageQuality {
 function distributionModeFromRule(value: unknown): DistributionMode {
   if (value && typeof value === "object") {
     const mode = (value as Record<string, unknown>).mode;
-    if (mode === "independent" || mode === "global" || mode === "hybrid" || mode === "manual")
+    if (
+      mode === "independent" ||
+      mode === "global" ||
+      mode === "hybrid" ||
+      mode === "manual"
+    )
       return mode;
   }
   return "hybrid";
@@ -144,12 +175,25 @@ const nav: [View, typeof LayoutDashboard][] = [
   ["PDF final", FileDown],
   ["Configuración", Settings],
 ];
+const navTutorialIds: Record<View, string> = {
+  Resumen: "summary",
+  Cursos: "courses",
+  Integrantes: "members",
+  Tareas: "assignments",
+  Distribución: "distribution",
+  Entregas: "submissions",
+  Evaluación: "evaluations",
+  "PDF final": "pdf_builder",
+  Configuración: "settings",
+};
 export default function AppShell({
   currentUser = {
     name: "Carlos Díaz",
     systemName: "Coordinador de Tareas",
   },
   initialData = [],
+  tutorialEligible = false,
+  tutorialProgress = [],
 }: {
   currentUser?: {
     name: string;
@@ -161,6 +205,8 @@ export default function AppShell({
     degree?: string | null;
   };
   initialData?: DashboardData;
+  tutorialEligible?: boolean;
+  tutorialProgress?: TutorialProgressDto[];
 }) {
   const currentCourse = initialData[0];
   const currentAssignment = currentCourse?.assignments[0];
@@ -184,22 +230,26 @@ export default function AppShell({
   const [menu, setMenu] = useState(false);
   const [sectionDefs, setSectionDefs] = useState(() =>
     currentAssignment?.sections.length
-      ? currentAssignment.sections.map((section) => sectionFromStored({
-          id: section.id,
-          name: section.name,
-          rule: section.rule,
-          notes: section.notes,
-          defaultWeight: section.defaultWeight,
-          labels: section.exercises.map((exercise) => exercise.label),
-        }))
+      ? currentAssignment.sections.map((section) =>
+          sectionFromStored({
+            id: section.id,
+            name: section.name,
+            rule: section.rule,
+            notes: section.notes,
+            defaultWeight: section.defaultWeight,
+            labels: section.exercises.map((exercise) => exercise.label),
+          }),
+        )
       : [emptySection("draft-section-1")],
   );
   const activeMembers = useMemo(
     () => members.filter((member) => member.active),
     [members],
   );
-  const [excludedMemberIds, setExcludedMemberIds] = useState<string[]>(() =>
-    currentAssignment?.exclusions.map((exclusion) => exclusion.memberId) ?? [],
+  const [excludedMemberIds, setExcludedMemberIds] = useState<string[]>(
+    () =>
+      currentAssignment?.exclusions.map((exclusion) => exclusion.memberId) ??
+      [],
   );
   const [exercises, setExercises] = useState<Exercise[]>(() =>
     currentAssignment?.sections.length
@@ -228,20 +278,27 @@ export default function AppShell({
       : [],
   );
   const [modal, setModal] = useState<ModalState | null>(null);
-  const [distributionMode, setDistributionMode] = useState<DistributionMode>(() =>
-    distributionModeFromRule(currentAssignment?.sections[0]?.rule),
+  const [distributionMode, setDistributionMode] = useState<DistributionMode>(
+    () => distributionModeFromRule(currentAssignment?.sections[0]?.rule),
   );
   const [toast, setToast] = useState("");
   const [pdfGenerating, setPdfGenerating] = useState(false);
   const defaultReport = currentAssignment
     ? reportText(
         currentAssignment.sections.map((section) => section.name),
-        Math.max(0, currentCourse.members.length - currentAssignment.submissions.length),
-        currentAssignment.submissions.filter((submission) => submission.late).length,
+        Math.max(
+          0,
+          currentCourse.members.length - currentAssignment.submissions.length,
+        ),
+        currentAssignment.submissions.filter((submission) => submission.late)
+          .length,
         [],
         currentAssignment.exclusions
-          .map((exclusion) =>
-            currentCourse.members.find((member) => member.id === exclusion.memberId)?.fullName,
+          .map(
+            (exclusion) =>
+              currentCourse.members.find(
+                (member) => member.id === exclusion.memberId,
+              )?.fullName,
           )
           .filter((name): name is string => Boolean(name)),
       )
@@ -257,11 +314,9 @@ export default function AppShell({
           name: file.originalName,
           mimeType: file.mimeType,
           url: `/api/files/${file.id}`,
-          rotation: ([0, 90, 180, 270].includes(file.rotation) ? file.rotation : 0) as
-            | 0
-            | 90
-            | 180
-            | 270,
+          rotation: ([0, 90, 180, 270].includes(file.rotation)
+            ? file.rotation
+            : 0) as 0 | 90 | 180 | 270,
           selectedPages: pdfPreferences(currentAssignment.pdfOrder).find(
             (preference) => preference.fileId === file.id,
           )?.selectedPages,
@@ -276,24 +331,49 @@ export default function AppShell({
     [...storedPdfFiles]
       .sort((left, right) => {
         const preferences = pdfPreferences(currentAssignment?.pdfOrder);
-        const leftOrder = preferences.find((item) => item.fileId === left.id)?.sortOrder;
-        const rightOrder = preferences.find((item) => item.fileId === right.id)?.sortOrder;
-        return (leftOrder ?? Number.MAX_SAFE_INTEGER) - (rightOrder ?? Number.MAX_SAFE_INTEGER);
+        const leftOrder = preferences.find(
+          (item) => item.fileId === left.id,
+        )?.sortOrder;
+        const rightOrder = preferences.find(
+          (item) => item.fileId === right.id,
+        )?.sortOrder;
+        return (
+          (leftOrder ?? Number.MAX_SAFE_INTEGER) -
+          (rightOrder ?? Number.MAX_SAFE_INTEGER)
+        );
       })
       .map((file) => file.id),
   );
-  const [pdfOptions, setPdfOptions] = useState<Record<string, Pick<StoredPdfSource, "rotation" | "selectedPages" | "cropPercent">>>(
-    () => Object.fromEntries(storedPdfFiles.map((file) => [file.id, { rotation: file.rotation, selectedPages: file.selectedPages, cropPercent: file.cropPercent }])),
+  const [pdfOptions, setPdfOptions] = useState<
+    Record<
+      string,
+      Pick<StoredPdfSource, "rotation" | "selectedPages" | "cropPercent">
+    >
+  >(() =>
+    Object.fromEntries(
+      storedPdfFiles.map((file) => [
+        file.id,
+        {
+          rotation: file.rotation,
+          selectedPages: file.selectedPages,
+          cropPercent: file.cropPercent,
+        },
+      ]),
+    ),
   );
   const [imageQuality, setImageQuality] = useState<ImageQuality>(() =>
     pdfImageQuality(currentAssignment?.pdfOrder),
   );
-  const orderedStoredPdfFiles = storedPdfFiles.map((file) => ({ ...file, ...pdfOptions[file.id] })).sort((left, right) => {
-    const leftIndex = pdfFileOrder.indexOf(left.id);
-    const rightIndex = pdfFileOrder.indexOf(right.id);
-    return (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex) -
-      (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex);
-  });
+  const orderedStoredPdfFiles = storedPdfFiles
+    .map((file) => ({ ...file, ...pdfOptions[file.id] }))
+    .sort((left, right) => {
+      const leftIndex = pdfFileOrder.indexOf(left.id);
+      const rightIndex = pdfFileOrder.indexOf(right.id);
+      return (
+        (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex) -
+        (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex)
+      );
+    });
   const currentAssignmentId = initialData[0]?.assignments[0]?.id;
   const totals = useMemo(
     () =>
@@ -319,11 +399,15 @@ export default function AppShell({
       }));
       const next = buildExercises(regenerated).map((exercise) => ({
         ...exercise,
-        weight: regenerated.find((section) => section.id === exercise.sectionId)?.defaultWeight ?? 1,
+        weight:
+          regenerated.find((section) => section.id === exercise.sectionId)
+            ?.defaultWeight ?? 1,
       }));
       setSectionDefs(regenerated);
       setExercises(next);
-      const eligible = activeMembers.filter((member) => !excludedMemberIds.includes(member.id));
+      const eligible = activeMembers.filter(
+        (member) => !excludedMemberIds.includes(member.id),
+      );
       setAllocations(
         eligible.length
           ? distributeByMode(next, eligible, distributionMode, allocations)
@@ -343,95 +427,111 @@ export default function AppShell({
     setPdfGenerating(true);
     notify("Generando documento…");
     try {
-    const persistedExercises: Exercise[] = currentAssignment.sections.flatMap(
-      (section) =>
-        section.exercises.map((exercise) => ({
-          id: exercise.id,
-          sectionId: section.id,
-          section: section.name,
-          label: exercise.label,
-          weight: exercise.weight,
-        })),
-    );
-    const persistedAllocations: Allocation[] = currentAssignment.sections.flatMap(
-      (section) =>
-        section.exercises.flatMap((exercise) =>
-          exercise.allocations.map((allocation) => ({
-            exerciseId: exercise.id,
-            memberId: allocation.memberId,
-            locked: allocation.locked,
+      const persistedExercises: Exercise[] = currentAssignment.sections.flatMap(
+        (section) =>
+          section.exercises.map((exercise) => ({
+            id: exercise.id,
+            sectionId: section.id,
+            section: section.name,
+            label: exercise.label,
+            weight: exercise.weight,
           })),
-        ),
-    );
-    const bytes = await createAssignmentPdf({
-      systemName: currentUser.systemName,
-      course: {
-        ...currentCourse,
-        university: currentCourse.university || currentUser.university,
-        faculty: currentCourse.faculty || currentUser.faculty,
-        campus: currentCourse.campus || currentUser.campus,
-        shift: currentCourse.shift || currentUser.shift,
-        degree: currentCourse.degree || currentUser.degree,
-      },
-      assignment: currentAssignment,
-      members,
-      exercises: persistedExercises.length ? persistedExercises : exercises,
-      allocations: persistedAllocations.length ? persistedAllocations : allocations,
-      evaluations: currentAssignment.evaluations.map((evaluation) => ({
-        memberId: evaluation.memberId,
-        total: evaluation.total,
-        scores: evaluation.scores.map((score) => ({
-          name: score.criterion.name,
-          maxScore: score.criterion.maxScore,
-          score: score.score,
-        })),
-      })),
-      reportBody,
-      files: [],
-      storedFiles: orderedStoredPdfFiles,
-      imageQuality,
-    });
-    const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
-    const uploadId = crypto.randomUUID();
-    const pathname = `pdf-builds/${currentAssignment.id}/${uploadId}.pdf`;
-    const stored = await upload(pathname, blob, {
-      access: "private",
-      handleUploadUrl: "/api/pdf-builds/upload",
-      clientPayload: JSON.stringify({ assignmentId: currentAssignment.id, uploadId }),
-      contentType: "application/pdf",
-      multipart: blob.size > 5 * 1024 * 1024,
-    });
-    const completed = await fetch("/api/pdf-builds/complete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        assignmentId: currentAssignment.id,
-        uploadId,
-        pathname: stored.pathname,
-        items: [
-          "REPORT_COVER", "GROUP_PERFORMANCE", "DETAILED_EVALUATION",
-          "GRADE_SUMMARY", "OFFICIAL_COVER", "MEMBERS",
-        ].map((kind) => ({ kind })).concat(
-          orderedStoredPdfFiles.map((file) => ({
-            kind: "SUBMISSION_FILE",
-            sourceId: file.id,
-            rotation: file.rotation ?? 0,
-            selectedPages: file.selectedPages,
-            cropPercent: file.cropPercent,
+      );
+      const persistedAllocations: Allocation[] =
+        currentAssignment.sections.flatMap((section) =>
+          section.exercises.flatMap((exercise) =>
+            exercise.allocations.map((allocation) => ({
+              exerciseId: exercise.id,
+              memberId: allocation.memberId,
+              locked: allocation.locked,
+            })),
+          ),
+        );
+      const bytes = await createAssignmentPdf({
+        systemName: currentUser.systemName,
+        course: {
+          ...currentCourse,
+          university: currentCourse.university || currentUser.university,
+          faculty: currentCourse.faculty || currentUser.faculty,
+          campus: currentCourse.campus || currentUser.campus,
+          shift: currentCourse.shift || currentUser.shift,
+          degree: currentCourse.degree || currentUser.degree,
+        },
+        assignment: currentAssignment,
+        members,
+        exercises: persistedExercises.length ? persistedExercises : exercises,
+        allocations: persistedAllocations.length
+          ? persistedAllocations
+          : allocations,
+        evaluations: currentAssignment.evaluations.map((evaluation) => ({
+          memberId: evaluation.memberId,
+          total: evaluation.total,
+          scores: evaluation.scores.map((score) => ({
+            name: score.criterion.name,
+            maxScore: score.criterion.maxScore,
+            score: score.score,
           })),
-        ),
-      }),
-    });
-    const completion = await completed.json();
-    if (!completed.ok) throw new Error(completion.error ?? "No se pudo guardar la versión final.");
-    const filename = `tarea-${currentAssignment.number}-${currentCourse.name
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9]+/g, "-")}.pdf`;
-    downloadBlob(blob, filename);
-    router.refresh();
-    notify(`PDF final generado y guardado como versión ${completion.build.version}`);
+        })),
+        reportBody,
+        files: [],
+        storedFiles: orderedStoredPdfFiles,
+        imageQuality,
+      });
+      const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
+      const uploadId = crypto.randomUUID();
+      const pathname = `pdf-builds/${currentAssignment.id}/${uploadId}.pdf`;
+      const stored = await upload(pathname, blob, {
+        access: "private",
+        handleUploadUrl: "/api/pdf-builds/upload",
+        clientPayload: JSON.stringify({
+          assignmentId: currentAssignment.id,
+          uploadId,
+        }),
+        contentType: "application/pdf",
+        multipart: blob.size > 5 * 1024 * 1024,
+      });
+      const completed = await fetch("/api/pdf-builds/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assignmentId: currentAssignment.id,
+          uploadId,
+          pathname: stored.pathname,
+          items: [
+            "REPORT_COVER",
+            "GROUP_PERFORMANCE",
+            "DETAILED_EVALUATION",
+            "GRADE_SUMMARY",
+            "OFFICIAL_COVER",
+            "MEMBERS",
+          ]
+            .map((kind) => ({ kind }))
+            .concat(
+              orderedStoredPdfFiles.map((file) => ({
+                kind: "SUBMISSION_FILE",
+                sourceId: file.id,
+                rotation: file.rotation ?? 0,
+                selectedPages: file.selectedPages,
+                cropPercent: file.cropPercent,
+              })),
+            ),
+        }),
+      });
+      const completion = await completed.json();
+      if (!completed.ok)
+        throw new Error(
+          completion.error ?? "No se pudo guardar la versión final.",
+        );
+      const filename = `tarea-${currentAssignment.number}-${currentCourse.name
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "-")}.pdf`;
+      downloadBlob(blob, filename);
+      router.refresh();
+      notify(
+        `PDF final generado y guardado como versión ${completion.build.version}`,
+      );
     } catch (error) {
       notify(
         error instanceof Error
@@ -456,11 +556,12 @@ export default function AppShell({
             <X />
           </button>
         </div>
-        <nav>
+        <nav data-tutorial="main-navigation">
           {nav.map(([label, Icon]) => (
             <button
               key={label}
               className={view === label ? "active" : ""}
+              data-tutorial={`nav-${navTutorialIds[label]}`}
               onClick={() => go(label)}
             >
               <Icon size={18} />
@@ -515,6 +616,12 @@ export default function AppShell({
           <button className="outline" onClick={() => go("Configuración")}>
             <Settings size={16} /> Configurar
           </button>
+          <TutorialSystem
+            eligible={tutorialEligible}
+            initialProgress={tutorialProgress}
+            view={view}
+            go={(target) => go(target as View)}
+          />
         </header>
         <section className="content">
           {view === "Resumen" && (
@@ -528,7 +635,10 @@ export default function AppShell({
               onEdit={(course) => setModal({ mode: "course", initial: course })}
               onToggle={(course) =>
                 startMutation(async () => {
-                  const result = await setCourseActive(course.id, !course.active);
+                  const result = await setCourseActive(
+                    course.id,
+                    !course.active,
+                  );
                   setToast(result.message);
                   if (result.ok) router.refresh();
                 })
@@ -559,7 +669,9 @@ export default function AppShell({
               courses={initialData}
               onCreate={() => setModal({ mode: "assignment" })}
               onOpen={() => go("Distribución")}
-              onEdit={(assignment) => setModal({ mode: "assignment", initial: assignment })}
+              onEdit={(assignment) =>
+                setModal({ mode: "assignment", initial: assignment })
+              }
               onArchive={(assignment) =>
                 startMutation(async () => {
                   const result = await setAssignmentArchived(
@@ -601,7 +713,11 @@ export default function AppShell({
               }
             />
           )}{" "}
-          {view === "Entregas" && <Submissions courses={initialData} />}{" "}
+          {view === "Entregas" && (
+            <SubmissionsErrorBoundary>
+              <Submissions courses={initialData} />
+            </SubmissionsErrorBoundary>
+          )}{" "}
           {view === "Evaluación" && <Evaluation courses={initialData} />}{" "}
           {view === "PDF final" && (
             <PdfBuilder
@@ -678,6 +794,43 @@ export default function AppShell({
     </div>
   );
 }
+class SubmissionsErrorBoundary extends Component<
+  { children: React.ReactNode },
+  { failed: boolean; retryKey: number }
+> {
+  state = { failed: false, retryKey: 0 };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error: Error) {
+    console.error("[submissions-ui] Error localizado en el módulo", {
+      name: error.name,
+      message: error.message,
+    });
+  }
+  render() {
+    if (this.state.failed)
+      return (
+        <div className="panel submissions-error" role="alert">
+          <h2>No fue posible cargar una parte de las entregas.</h2>
+          <p>Actualice la página o vuelva a intentarlo.</p>
+          <button
+            className="primary"
+            onClick={() =>
+              this.setState((state) => ({
+                failed: false,
+                retryKey: state.retryKey + 1,
+              }))
+            }
+          >
+            Reintentar
+          </button>
+        </div>
+      );
+    return <div key={this.state.retryKey}>{this.props.children}</div>;
+  }
+}
+
 function Title({
   eyebrow,
   title,
@@ -737,7 +890,10 @@ function Dashboard({
     const course = data.find((item) =>
       item.assignments.some((candidate) => candidate.id === assignment.id),
     );
-    return total + Math.max(0, (course?.members.length ?? 0) - assignment.submissions.length);
+    return (
+      total +
+      Math.max(0, (course?.members.length ?? 0) - assignment.submissions.length)
+    );
   }, 0);
   return (
     <>
@@ -895,7 +1051,11 @@ function Courses({
   return (
     <>
       <Title eyebrow="Organización" title="Cursos">
-        <button className="primary" onClick={onCreate}>
+        <button
+          className="primary"
+          data-tutorial="create-course"
+          onClick={onCreate}
+        >
           <Plus size={17} /> Nuevo curso
         </button>
       </Title>
@@ -919,11 +1079,15 @@ function Courses({
             <footer>
               <b>{course.members.length} integrantes</b>
               <div className="row-actions">
-                <button onClick={() => onEdit(course)} aria-label={`Editar ${course.name}`}>
+                <button
+                  onClick={() => onEdit(course)}
+                  aria-label={`Editar ${course.name}`}
+                >
                   <Pencil size={14} /> Editar
                 </button>
                 <button disabled={busy} onClick={() => onToggle(course)}>
-                  <Archive size={14} /> {course.active ? "Archivar" : "Reactivar"}
+                  <Archive size={14} />{" "}
+                  {course.active ? "Archivar" : "Reactivar"}
                 </button>
                 <button onClick={onOpen}>Integrantes →</button>
               </div>
@@ -971,17 +1135,32 @@ function Members({
     <>
       <Title eyebrow="Organización" title="Integrantes del grupo">
         <div className="row-actions">
-          <button className="outline" onClick={() => setToolsOpen((open) => !open)} disabled={!hasCourses}>
+          <button
+            className="outline"
+            onClick={() => setToolsOpen((open) => !open)}
+            disabled={!hasCourses}
+          >
             {toolsOpen ? "Cerrar herramientas" : "Importar o copiar"}
           </button>
           <button
             className="outline"
             disabled={!courseId || busy}
-            onClick={() => courseId && window.confirm("¿Reiniciar el saldo acumulado de este curso? El historial semanal no se borrará.") && onAction(() => resetCourseWorkloadBalance(courseId))}
+            onClick={() =>
+              courseId &&
+              window.confirm(
+                "¿Reiniciar el saldo acumulado de este curso? El historial semanal no se borrará.",
+              ) &&
+              onAction(() => resetCourseWorkloadBalance(courseId))
+            }
           >
             Reiniciar saldo semestral
           </button>
-          <button className="primary" onClick={onCreate} disabled={!hasCourses}>
+          <button
+            className="primary"
+            data-tutorial="create-member"
+            onClick={onCreate}
+            disabled={!hasCourses}
+          >
             <Plus size={17} /> Agregar integrante
           </button>
         </div>
@@ -990,55 +1169,91 @@ function Members({
         <div className="panel member-tools">
           <section>
             <h3>Importar CSV</h3>
-            <p>Encabezados: <code>nombre,carnet,nombre_corto,correo</code>. Máximo 200 filas.</p>
+            <p>
+              Encabezados: <code>nombre,carnet,nombre_corto,correo</code>.
+              Máximo 200 filas.
+            </p>
             <label>
               Curso destino
-              <select value={targetCourseId} onChange={(event) => setTargetCourseId(event.target.value)}>
+              <select
+                value={targetCourseId}
+                onChange={(event) => setTargetCourseId(event.target.value)}
+              >
                 <option value="">Selecciona un curso</option>
-                {courses.filter((course) => course.active).map((course) => (
-                  <option key={course.id} value={course.id}>{course.name}</option>
-                ))}
+                {courses
+                  .filter((course) => course.active)
+                  .map((course) => (
+                    <option key={course.id} value={course.id}>
+                      {course.name}
+                    </option>
+                  ))}
               </select>
             </label>
             <textarea
               value={csv}
               onChange={(event) => setCsv(event.target.value)}
-              placeholder={"nombre,carnet,nombre_corto,correo\nAna Pérez,2026-001,Ana,ana@example.com"}
+              placeholder={
+                "nombre,carnet,nombre_corto,correo\nAna Pérez,2026-001,Ana,ana@example.com"
+              }
               rows={5}
             />
             <button
               className="primary"
               disabled={busy || !targetCourseId || !csv.trim()}
-              onClick={() => onAction(() => importMembersCsv(targetCourseId, csv))}
+              onClick={() =>
+                onAction(() => importMembersCsv(targetCourseId, csv))
+              }
             >
               Importar integrantes
             </button>
           </section>
           <section>
             <h3>Copiar desde otro curso</h3>
-            <p>Copia integrantes activos y omite carnés que ya existan en el destino.</p>
+            <p>
+              Copia integrantes activos y omite carnés que ya existan en el
+              destino.
+            </p>
             <label>
               Curso origen
-              <select value={sourceCourseId} onChange={(event) => setSourceCourseId(event.target.value)}>
+              <select
+                value={sourceCourseId}
+                onChange={(event) => setSourceCourseId(event.target.value)}
+              >
                 <option value="">Selecciona el origen</option>
                 {courses.map((course) => (
-                  <option key={course.id} value={course.id}>{course.name}</option>
+                  <option key={course.id} value={course.id}>
+                    {course.name}
+                  </option>
                 ))}
               </select>
             </label>
             <label>
               Curso destino
-              <select value={targetCourseId} onChange={(event) => setTargetCourseId(event.target.value)}>
+              <select
+                value={targetCourseId}
+                onChange={(event) => setTargetCourseId(event.target.value)}
+              >
                 <option value="">Selecciona el destino</option>
-                {courses.filter((course) => course.active).map((course) => (
-                  <option key={course.id} value={course.id}>{course.name}</option>
-                ))}
+                {courses
+                  .filter((course) => course.active)
+                  .map((course) => (
+                    <option key={course.id} value={course.id}>
+                      {course.name}
+                    </option>
+                  ))}
               </select>
             </label>
             <button
               className="primary"
-              disabled={busy || !sourceCourseId || !targetCourseId || sourceCourseId === targetCourseId}
-              onClick={() => onAction(() => copyMembers(sourceCourseId, targetCourseId))}
+              disabled={
+                busy ||
+                !sourceCourseId ||
+                !targetCourseId ||
+                sourceCourseId === targetCourseId
+              }
+              onClick={() =>
+                onAction(() => copyMembers(sourceCourseId, targetCourseId))
+              }
             >
               Copiar integrantes
             </button>
@@ -1123,9 +1338,12 @@ function Members({
                       <button
                         className="icon-action"
                         disabled={busy}
-                        onClick={() => onAction(() => setMemberActive(m.id, !m.active))}
+                        onClick={() =>
+                          onAction(() => setMemberActive(m.id, !m.active))
+                        }
                       >
-                        <Archive size={14} /> {m.active ? "Desactivar" : "Reactivar"}
+                        <Archive size={14} />{" "}
+                        {m.active ? "Desactivar" : "Reactivar"}
                       </button>
                     </div>
                   </td>
@@ -1165,6 +1383,7 @@ function Tasks({
       <Title eyebrow="Planificación" title="Tareas semanales">
         <button
           className="primary"
+          data-tutorial="create-assignment"
           onClick={onCreate}
           disabled={courses.length === 0}
         >
@@ -1196,10 +1415,17 @@ function Tasks({
               <button className="outline" onClick={() => onEdit(assignment)}>
                 <Pencil size={14} /> Editar
               </button>
-              <button className="outline" disabled={busy} onClick={() => onArchive(assignment)}>
-                <Archive size={14} /> {assignment.status === "ARCHIVED" ? "Restaurar" : "Archivar"}
+              <button
+                className="outline"
+                disabled={busy}
+                onClick={() => onArchive(assignment)}
+              >
+                <Archive size={14} />{" "}
+                {assignment.status === "ARCHIVED" ? "Restaurar" : "Archivar"}
               </button>
-              <button className="outline" onClick={onOpen}>Distribución</button>
+              <button className="outline" onClick={onOpen}>
+                Distribución
+              </button>
             </div>
           </div>
         ))}
@@ -1256,7 +1482,9 @@ function Distribution({
 }) {
   const [saving, startSaving] = useTransition();
   const [saveMessage, setSaveMessage] = useState("");
-  const [exportView, setExportView] = useState<"section" | "member" | "summary">("member");
+  const [exportView, setExportView] = useState<
+    "section" | "member" | "summary"
+  >("member");
   const [exportMessage, setExportMessage] = useState("");
   const [imagePages, setImagePages] = useState<DistributionImagePage[]>([]);
   const [imagePageIndex, setImagePageIndex] = useState(0);
@@ -1269,7 +1497,8 @@ function Distribution({
     size: "whatsapp",
     nameMode: "full",
     primaryColor: "#17624f",
-    footer: "Resolver todos los ejercicios mostrando el procedimiento completo y enviar en un PDF legible.",
+    footer:
+      "Resolver todos los ejercicios mostrando el procedimiento completo y enviar en un PDF legible.",
   });
   const move = (eid: string, mid: string) =>
     setAllocations((a) =>
@@ -1287,7 +1516,9 @@ function Distribution({
     );
   const renameSection = (id: string, name: string) => {
     setSections((current) =>
-      current.map((section) => (section.id === id ? { ...section, name } : section)),
+      current.map((section) =>
+        section.id === id ? { ...section, name } : section,
+      ),
     );
     setExercises((current) =>
       current.map((exercise) =>
@@ -1297,38 +1528,67 @@ function Distribution({
   };
   const removeSection = (id: string) => {
     const removedExercises = new Set(
-      exercises.filter((exercise) => exercise.sectionId === id).map((exercise) => exercise.id),
+      exercises
+        .filter((exercise) => exercise.sectionId === id)
+        .map((exercise) => exercise.id),
     );
     setSections((current) => current.filter((section) => section.id !== id));
-    setExercises((current) => current.filter((exercise) => exercise.sectionId !== id));
+    setExercises((current) =>
+      current.filter((exercise) => exercise.sectionId !== id),
+    );
     setAllocations((current) =>
-      current.filter((allocation) => !removedExercises.has(allocation.exerciseId)),
+      current.filter(
+        (allocation) => !removedExercises.has(allocation.exerciseId),
+      ),
     );
   };
   const updateSection = (id: string, patch: Partial<SectionConfig>) =>
-    setSections((current) => current.map((section) =>
-      section.id === id ? { ...section, ...patch } : section,
-    ));
+    setSections((current) =>
+      current.map((section) =>
+        section.id === id ? { ...section, ...patch } : section,
+      ),
+    );
   const rebuildFromSections = (nextSections: SectionConfig[]) => {
     const nextExercises = buildExercises(nextSections).map((exercise) => ({
       ...exercise,
-      weight: nextSections.find((section) => section.id === exercise.sectionId)?.defaultWeight ?? 1,
+      weight:
+        nextSections.find((section) => section.id === exercise.sectionId)
+          ?.defaultWeight ?? 1,
     }));
     setSections(nextSections);
     setExercises(nextExercises);
-    const eligible = members.filter((member) => !excludedMemberIds.includes(member.id));
-    setAllocations(eligible.length
-      ? distributeByMode(nextExercises, eligible, distributionMode, allocations)
-      : []);
+    const eligible = members.filter(
+      (member) => !excludedMemberIds.includes(member.id),
+    );
+    setAllocations(
+      eligible.length
+        ? distributeByMode(
+            nextExercises,
+            eligible,
+            distributionMode,
+            allocations,
+          )
+        : [],
+    );
   };
   const regenerateSection = (id: string) => {
     try {
-      rebuildFromSections(sections.map((section) => section.id === id
-        ? { ...section, labels: generateSectionLabels(section) }
-        : section));
-      setSaveMessage("Sección regenerada sin modificar la configuración de las demás.");
+      rebuildFromSections(
+        sections.map((section) =>
+          section.id === id
+            ? { ...section, labels: generateSectionLabels(section) }
+            : section,
+        ),
+      );
+      setSaveMessage(
+        "Sección regenerada sin modificar la configuración de las demás.",
+      );
     } catch (error) {
-      setSaveMessage(error instanceof Error ? error.message : "No se pudo regenerar la sección.");
+      setSaveMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo regenerar la sección.",
+      );
     }
   };
   const moveSection = (id: string, direction: -1 | 1) => {
@@ -1342,23 +1602,58 @@ function Distribution({
   const duplicateSection = (section: SectionConfig) => {
     let suffix = 1;
     let name = `${section.name} copia`;
-    while (sections.some((item) => item.name.toLocaleLowerCase("es") === name.toLocaleLowerCase("es")))
+    while (
+      sections.some(
+        (item) =>
+          item.name.toLocaleLowerCase("es") === name.toLocaleLowerCase("es"),
+      )
+    )
       name = `${section.name} copia ${++suffix}`;
-    const copy = { ...section, id: crypto.randomUUID(), name, labels: [...section.labels] };
+    const copy = {
+      ...section,
+      id: crypto.randomUUID(),
+      name,
+      labels: [...section.labels],
+    };
     const index = sections.findIndex((item) => item.id === section.id);
-    rebuildFromSections([...sections.slice(0, index + 1), copy, ...sections.slice(index + 1)]);
+    rebuildFromSections([
+      ...sections.slice(0, index + 1),
+      copy,
+      ...sections.slice(index + 1),
+    ]);
   };
-  const eligibleMembers = members.filter((member) => !excludedMemberIds.includes(member.id));
+  const eligibleMembers = members.filter(
+    (member) => !excludedMemberIds.includes(member.id),
+  );
   const distributionComplete =
     exercises.length > 0 &&
     allocations.length === exercises.length &&
-    new Set(allocations.map((allocation) => allocation.exerciseId)).size === exercises.length &&
-    allocations.every((allocation) => eligibleMembers.some((member) => member.id === allocation.memberId));
-  const sectionView = distributionBySection(exercises, allocations, eligibleMembers);
-  const memberView = distributionByMember(exercises, allocations, eligibleMembers);
-  const summaryView = distributionSummaryTsv(exercises, allocations, eligibleMembers);
+    new Set(allocations.map((allocation) => allocation.exerciseId)).size ===
+      exercises.length &&
+    allocations.every((allocation) =>
+      eligibleMembers.some((member) => member.id === allocation.memberId),
+    );
+  const sectionView = distributionBySection(
+    exercises,
+    allocations,
+    eligibleMembers,
+  );
+  const memberView = distributionByMember(
+    exercises,
+    allocations,
+    eligibleMembers,
+  );
+  const summaryView = distributionSummaryTsv(
+    exercises,
+    allocations,
+    eligibleMembers,
+  );
   const exportedText =
-    exportView === "section" ? sectionView : exportView === "member" ? memberView : summaryView;
+    exportView === "section"
+      ? sectionView
+      : exportView === "member"
+        ? memberView
+        : summaryView;
   const generatedWhatsapp = assignment
     ? whatsappMessage({
         courseName,
@@ -1372,24 +1667,28 @@ function Distribution({
       })
     : "Crea una tarea para generar el mensaje.";
   const [whatsapp, setWhatsapp] = useState(generatedWhatsapp);
-  const imageInput = assignment ? {
-    courseName,
-    assignmentNumber: assignment.number,
-    assignmentTitle: assignment.title,
-    dueAt: assignment.dueAt,
-    instructions: assignment.instructions,
-    exercises,
-    allocations,
-    members: eligibleMembers,
-    options: imageOptions,
-  } : null;
+  const imageInput = assignment
+    ? {
+        courseName,
+        assignmentNumber: assignment.number,
+        assignmentTitle: assignment.title,
+        dueAt: assignment.dueAt,
+        instructions: assignment.instructions,
+        exercises,
+        allocations,
+        members: eligibleMembers,
+        options: imageOptions,
+      }
+    : null;
   const generatedPage = imagePages[imagePageIndex];
   const generateImages = () => {
     if (!imageInput) return;
     const pages = createDistributionImages(imageInput);
     setImagePages(pages);
     setImagePageIndex(0);
-    setExportMessage(`${pages.length} imagen${pages.length === 1 ? "" : "es"} generada${pages.length === 1 ? "" : "s"}.`);
+    setExportMessage(
+      `${pages.length} imagen${pages.length === 1 ? "" : "es"} generada${pages.length === 1 ? "" : "s"}.`,
+    );
   };
   const imageAction = async (action: "copy" | "download" | "share") => {
     if (!assignment || !generatedPage) return;
@@ -1400,40 +1699,65 @@ function Distribution({
       if (action === "copy") {
         if (!capabilities.clipboard) {
           downloadBlob(png, filename);
-          setExportMessage("El navegador no permite copiar imágenes; se descargó el PNG como alternativa.");
+          setExportMessage(
+            "El navegador no permite copiar imágenes; se descargó el PNG como alternativa.",
+          );
           return;
         }
-        await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+        await navigator.clipboard.write([
+          new ClipboardItem({ "image/png": png }),
+        ]);
         setExportMessage("Imagen copiada al portapapeles.");
       } else if (action === "share") {
         const file = new File([png], filename, { type: "image/png" });
         if (!capabilities.share || !navigator.canShare?.({ files: [file] })) {
           downloadBlob(png, filename);
-          setExportMessage("Este dispositivo no permite compartir archivos; se descargó el PNG como alternativa.");
+          setExportMessage(
+            "Este dispositivo no permite compartir archivos; se descargó el PNG como alternativa.",
+          );
           return;
         }
-        await navigator.share({ files: [file], title: `${courseName} - distribución` });
+        await navigator.share({
+          files: [file],
+          title: `${courseName} - distribución`,
+        });
         setExportMessage("Imagen compartida.");
       } else {
         downloadBlob(png, filename);
         setExportMessage(`PNG descargado: ${filename}`);
       }
     } catch (error) {
-      setExportMessage(error instanceof Error ? error.message : "No se pudo generar la imagen.");
+      setExportMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo generar la imagen.",
+      );
     }
   };
   const downloadCardsZip = async () => {
-    if (!imagePages.length || imageOptions.view !== "cards" || !assignment) return;
+    if (!imagePages.length || imageOptions.view !== "cards" || !assignment)
+      return;
     try {
-      const files = await Promise.all(imagePages.map(async (page) => ({
-        filename: page.filename,
-        bytes: new Uint8Array(await (await svgToPng(page.svg)).arrayBuffer()),
-      })));
-      const filename = `${courseName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "curso"}-tarea-${assignment.number}-tarjetas.zip`;
+      const files = await Promise.all(
+        imagePages.map(async (page) => ({
+          filename: page.filename,
+          bytes: new Uint8Array(await (await svgToPng(page.svg)).arrayBuffer()),
+        })),
+      );
+      const filename = `${
+        courseName
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-|-$/g, "") || "curso"
+      }-tarea-${assignment.number}-tarjetas.zip`;
       downloadBlob(pngZip(files), filename);
       setExportMessage(`ZIP descargado: ${filename}`);
     } catch (error) {
-      setExportMessage(error instanceof Error ? error.message : "No se pudo crear el ZIP.");
+      setExportMessage(
+        error instanceof Error ? error.message : "No se pudo crear el ZIP.",
+      );
     }
   };
   const copy = async (text: string, success: string) => {
@@ -1441,7 +1765,9 @@ function Distribution({
       await navigator.clipboard.writeText(text);
       setExportMessage(success);
     } catch {
-      setExportMessage("El navegador no permitió copiar. Selecciona el texto manualmente.");
+      setExportMessage(
+        "El navegador no permitió copiar. Selecciona el texto manualmente.",
+      );
     }
   };
   return (
@@ -1456,7 +1782,12 @@ function Distribution({
           </button>
           <button
             className="primary"
-            disabled={!assignmentId || !eligibleMembers.length || !distributionComplete || saving}
+            disabled={
+              !assignmentId ||
+              !eligibleMembers.length ||
+              !distributionComplete ||
+              saving
+            }
             onClick={() =>
               assignmentId &&
               startSaving(async () => {
@@ -1470,7 +1801,7 @@ function Distribution({
                     name: section.name,
                     selection: section.selection,
                     start: section.start,
-                    end: section.end,
+                    end: section.end ?? 0,
                     interval: section.interval,
                     manualList: section.manualList,
                     exclusions: section.exclusions,
@@ -1499,7 +1830,10 @@ function Distribution({
       <div className="panel exclusion-panel">
         <div>
           <h3>Participación en esta tarea</h3>
-          <p>Excluye temporalmente a alguien sin desactivarlo en el curso. Redistribuye antes de guardar.</p>
+          <p>
+            Excluye temporalmente a alguien sin desactivarlo en el curso.
+            Redistribuye antes de guardar.
+          </p>
         </div>
         <div className="exclusion-list">
           {members.map((member) => (
@@ -1514,7 +1848,9 @@ function Distribution({
                       : [...current, member.id],
                   );
                   if (!event.target.checked)
-                    setAllocations((current) => current.filter((item) => item.memberId !== member.id));
+                    setAllocations((current) =>
+                      current.filter((item) => item.memberId !== member.id),
+                    );
                 }}
               />
               {member.shortName}
@@ -1527,7 +1863,9 @@ function Distribution({
           Modo de distribución
           <select
             value={distributionMode}
-            onChange={(event) => setDistributionMode(event.target.value as DistributionMode)}
+            onChange={(event) =>
+              setDistributionMode(event.target.value as DistributionMode)
+            }
           >
             <option value="hybrid">Híbrido recomendado</option>
             <option value="independent">Independiente por sección</option>
@@ -1541,18 +1879,24 @@ function Distribution({
             : "Redistribuye para aplicar el modo seleccionado con la misma semilla reproducible."}
         </p>
       </div>
-      <div className="panel section-editor">
+      <div className="panel section-editor" data-tutorial="section-editor">
         <div className="panel-head">
           <div>
             <h3>Secciones de la tarea</h3>
-            <p>Cada tarjeta conserva su propia regla, rango, lista, peso y observaciones.</p>
+            <p>
+              Cada tarjeta conserva su propia regla, rango, lista, peso y
+              observaciones.
+            </p>
           </div>
           <button
             className="outline"
             onClick={() =>
               setSections((current) => [
                 ...current,
-                emptySection(crypto.randomUUID(), `Sección ${current.length + 1}`),
+                emptySection(
+                  crypto.randomUUID(),
+                  `Sección ${current.length + 1}`,
+                ),
               ])
             }
           >
@@ -1560,7 +1904,13 @@ function Distribution({
           </button>
         </div>
         <div className="section-total">
-          <strong>{sections.reduce((total, section) => total + section.labels.length, 0)} ejercicios en total</strong>
+          <strong>
+            {sections.reduce(
+              (total, section) => total + section.labels.length,
+              0,
+            )}{" "}
+            ejercicios en total
+          </strong>
           <span>{sections.length} sección(es) configurada(s)</span>
         </div>
         <div className="section-list">
@@ -1569,16 +1919,42 @@ function Distribution({
               <header>
                 <label>
                   Nombre o número de sección
-                  <input value={section.name} onChange={(event) => renameSection(section.id, event.target.value)} />
+                  <input
+                    value={section.name}
+                    onChange={(event) =>
+                      renameSection(section.id, event.target.value)
+                    }
+                  />
                 </label>
-                <span className={section.labels.length ? "section-count" : "section-count warning"}>
+                <span
+                  className={
+                    section.labels.length
+                      ? "section-count"
+                      : "section-count warning"
+                  }
+                >
                   {section.labels.length} ejercicio(s)
                 </span>
               </header>
               <div className="section-fields">
                 <label>
                   Tipo de selección
-                  <select value={section.selection} onChange={(event) => updateSection(section.id, { selection: event.target.value as SectionConfig["selection"] })}>
+                  <select
+                    value={section.selection}
+                    onChange={(event) => {
+                      const selection = event.target
+                        .value as SectionConfig["selection"];
+                      updateSection(section.id, {
+                        selection,
+                        start:
+                          selection === "range" &&
+                          (!Number.isInteger(section.start) ||
+                            section.start < 0)
+                            ? 1
+                            : section.start,
+                      });
+                    }}
+                  >
                     <option value="range">Rango completo</option>
                     <option value="odd">Impares</option>
                     <option value="even">Pares</option>
@@ -1589,39 +1965,190 @@ function Distribution({
                 {section.selection === "manual" ? (
                   <label className="wide">
                     Lista manual
-                    <textarea rows={2} value={section.manualList} onChange={(event) => updateSection(section.id, { manualList: event.target.value })} placeholder="5, 10, 15, 20" />
+                    <textarea
+                      rows={2}
+                      value={section.manualList}
+                      onChange={(event) =>
+                        updateSection(section.id, {
+                          manualList: event.target.value,
+                        })
+                      }
+                      placeholder="5, 10, 15, 20"
+                    />
                   </label>
                 ) : (
                   <>
-                    <label>Desde<input type="number" min="0" value={section.start} onChange={(event) => updateSection(section.id, { start: Number(event.target.value) })} /></label>
-                    <label>Hasta<input type="number" min="0" value={section.end} onChange={(event) => updateSection(section.id, { end: Number(event.target.value) })} /></label>
-                    <label>{section.selection === "multiple" ? "Múltiplo de" : "Intervalo"}<input type="number" min="1" value={section.interval} disabled={section.selection !== "multiple" && section.selection !== "range"} onChange={(event) => updateSection(section.id, { interval: Number(event.target.value) })} /></label>
-                    <label>Exclusiones<input value={section.exclusions} onChange={(event) => updateSection(section.id, { exclusions: event.target.value })} placeholder="7, 12" /></label>
-                    <label>Inclusiones especiales<input value={section.inclusions} onChange={(event) => updateSection(section.id, { inclusions: event.target.value })} placeholder="8a, 30" /></label>
+                    <label>
+                      Desde
+                      <input
+                        type="number"
+                        min="0"
+                        value={section.start}
+                        onChange={(event) =>
+                          updateSection(section.id, {
+                            start: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </label>
+                    <label>
+                      Hasta
+                      <input
+                        type="number"
+                        min="0"
+                        value={section.end ?? ""}
+                        onChange={(event) =>
+                          updateSection(section.id, {
+                            end:
+                              event.target.value === ""
+                                ? null
+                                : Number(event.target.value),
+                          })
+                        }
+                      />
+                    </label>
+                    <label>
+                      {section.selection === "multiple"
+                        ? "Múltiplo de"
+                        : "Intervalo"}
+                      <input
+                        type="number"
+                        min="1"
+                        value={section.interval}
+                        disabled={
+                          section.selection !== "multiple" &&
+                          section.selection !== "range"
+                        }
+                        onChange={(event) =>
+                          updateSection(section.id, {
+                            interval: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </label>
+                    <label>
+                      Exclusiones
+                      <input
+                        value={section.exclusions}
+                        onChange={(event) =>
+                          updateSection(section.id, {
+                            exclusions: event.target.value,
+                          })
+                        }
+                        placeholder="7, 12"
+                      />
+                    </label>
+                    <label>
+                      Inclusiones especiales
+                      <input
+                        value={section.inclusions}
+                        onChange={(event) =>
+                          updateSection(section.id, {
+                            inclusions: event.target.value,
+                          })
+                        }
+                        placeholder="8a, 30"
+                      />
+                    </label>
                   </>
                 )}
-                <label>Peso por ejercicio<input type="number" min="0.1" max="100" step="0.1" value={section.defaultWeight} onChange={(event) => updateSection(section.id, { defaultWeight: Number(event.target.value) })} /></label>
-                <label className="wide">Observaciones<input value={section.notes} onChange={(event) => updateSection(section.id, { notes: event.target.value })} /></label>
+                <label>
+                  Peso por ejercicio
+                  <input
+                    type="number"
+                    min="0.1"
+                    max="100"
+                    step="0.1"
+                    value={section.defaultWeight}
+                    onChange={(event) =>
+                      updateSection(section.id, {
+                        defaultWeight: Number(event.target.value),
+                      })
+                    }
+                  />
+                </label>
+                <label className="wide">
+                  Observaciones
+                  <input
+                    value={section.notes}
+                    onChange={(event) =>
+                      updateSection(section.id, { notes: event.target.value })
+                    }
+                  />
+                </label>
               </div>
               <div className="section-preview">
                 <small>Vista previa persistida</small>
-                <b>{section.labels.join(", ") || "Sin ejercicios. Configura y regenera esta sección."}</b>
-                {section.selection === "manual" && duplicateLabels(section.manualList).length > 0 && (
-                  <em>Duplicados omitidos dentro de esta sección: {duplicateLabels(section.manualList).join(", ")}</em>
-                )}
+                <b>
+                  {section.labels.join(", ") ||
+                    "Sin ejercicios. Configura y regenera esta sección."}
+                </b>
+                {section.selection === "manual" &&
+                  duplicateLabels(section.manualList).length > 0 && (
+                    <em>
+                      Duplicados omitidos dentro de esta sección:{" "}
+                      {duplicateLabels(section.manualList).join(", ")}
+                    </em>
+                  )}
               </div>
               <footer className="section-actions">
-                <button className="primary" onClick={() => regenerateSection(section.id)}>Regenerar ejercicios</button>
-                <button className="outline" onClick={() => duplicateSection(section)}>Duplicar</button>
-                <button className="outline" disabled={index === 0} onClick={() => moveSection(section.id, -1)}>Subir</button>
-                <button className="outline" disabled={index === sections.length - 1} onClick={() => moveSection(section.id, 1)}>Bajar</button>
-                <button className="outline" onClick={() => rebuildFromSections(sections.map((item) => item.id === section.id ? emptySection(section.id, section.name) : item))}>Limpiar configuración</button>
-                <button aria-label={`Eliminar ${section.name}`} disabled={sections.length === 1} onClick={() => removeSection(section.id)}>Eliminar</button>
+                <button
+                  className="primary"
+                  disabled={!sectionRangeValid(section)}
+                  onClick={() => regenerateSection(section.id)}
+                >
+                  Regenerar ejercicios
+                </button>
+                <button
+                  className="outline"
+                  onClick={() => duplicateSection(section)}
+                >
+                  Duplicar
+                </button>
+                <button
+                  className="outline"
+                  disabled={index === 0}
+                  onClick={() => moveSection(section.id, -1)}
+                >
+                  Subir
+                </button>
+                <button
+                  className="outline"
+                  disabled={index === sections.length - 1}
+                  onClick={() => moveSection(section.id, 1)}
+                >
+                  Bajar
+                </button>
+                <button
+                  className="outline"
+                  onClick={() =>
+                    rebuildFromSections(
+                      sections.map((item) =>
+                        item.id === section.id
+                          ? emptySection(section.id, section.name)
+                          : item,
+                      ),
+                    )
+                  }
+                >
+                  Limpiar configuración
+                </button>
+                <button
+                  aria-label={`Eliminar ${section.name}`}
+                  disabled={sections.length === 1}
+                  onClick={() => removeSection(section.id)}
+                >
+                  Eliminar
+                </button>
               </footer>
             </article>
           ))}
         </div>
-        {sections.some((section) => section.labels.length === 0) && <p className="notice">Hay secciones sin ejercicios; regenera cada una antes de distribuir.</p>}
+        {sections.some((section) => section.labels.length === 0) && (
+          <p className="notice">
+            Hay secciones sin ejercicios; regenera cada una antes de distribuir.
+          </p>
+        )}
       </div>
       <div className="matrix panel">
         <table>
@@ -1668,19 +2195,25 @@ function Distribution({
                           </select>
                           <button
                             className={
-                              allocations.find((item) => item.exerciseId === e.id)?.locked
+                              allocations.find(
+                                (item) => item.exerciseId === e.id,
+                              )?.locked
                                 ? "locked"
                                 : ""
                             }
                             aria-label={`${
-                              allocations.find((item) => item.exerciseId === e.id)?.locked
+                              allocations.find(
+                                (item) => item.exerciseId === e.id,
+                              )?.locked
                                 ? "Desbloquear"
                                 : "Bloquear"
                             } ${s} ${e.label}`}
                             title="Conservar esta asignación al redistribuir"
                             onClick={() => toggleLock(e.id)}
                           >
-                            {allocations.find((item) => item.exerciseId === e.id)?.locked
+                            {allocations.find(
+                              (item) => item.exerciseId === e.id,
+                            )?.locked
                               ? "🔒"
                               : "○"}
                           </button>
@@ -1699,7 +2232,10 @@ function Distribution({
         </table>
       </div>
       <div className="notice">
-        <CheckCircle2 /> {distributionComplete ? "Cobertura completa" : "Distribución pendiente"}: {allocations.length} de {exercises.length} asignados · {excludedMemberIds.length} excluidos · semilla 5
+        <CheckCircle2 />{" "}
+        {distributionComplete ? "Cobertura completa" : "Distribución pendiente"}
+        : {allocations.length} de {exercises.length} asignados ·{" "}
+        {excludedMemberIds.length} excluidos · semilla 5
       </div>
       {saveMessage && <div className="notice">{saveMessage}</div>}
       <div className="distribution-exports">
@@ -1710,18 +2246,42 @@ function Distribution({
               <p>Copia la distribución como texto, tabla TSV o imagen.</p>
             </div>
             <div className="view-tabs">
-              <button className={exportView === "section" ? "active" : ""} onClick={() => setExportView("section")}>Por sección</button>
-              <button className={exportView === "member" ? "active" : ""} onClick={() => setExportView("member")}>Por integrante</button>
-              <button className={exportView === "summary" ? "active" : ""} onClick={() => setExportView("summary")}>Resumen</button>
+              <button
+                className={exportView === "section" ? "active" : ""}
+                onClick={() => setExportView("section")}
+              >
+                Por sección
+              </button>
+              <button
+                className={exportView === "member" ? "active" : ""}
+                onClick={() => setExportView("member")}
+              >
+                Por integrante
+              </button>
+              <button
+                className={exportView === "summary" ? "active" : ""}
+                onClick={() => setExportView("summary")}
+              >
+                Resumen
+              </button>
             </div>
           </div>
-          <pre className="export-preview">{exportedText || "Genera una distribución para ver la exportación."}</pre>
+          <pre className="export-preview">
+            {exportedText || "Genera una distribución para ver la exportación."}
+          </pre>
           <div className="title-actions">
-            <button className="outline" onClick={() => copy(exportedText, "Vista copiada.")}>Copiar {exportView === "summary" ? "tabla" : "texto"}</button>
+            <button
+              className="outline"
+              onClick={() => copy(exportedText, "Vista copiada.")}
+            >
+              Copiar {exportView === "summary" ? "tabla" : "texto"}
+            </button>
             <button
               className="outline"
               onClick={() => {
-                const blob = new Blob([summaryView], { type: "text/tab-separated-values;charset=utf-8" });
+                const blob = new Blob([summaryView], {
+                  type: "text/tab-separated-values;charset=utf-8",
+                });
                 const link = document.createElement("a");
                 link.href = URL.createObjectURL(blob);
                 link.download = `${courseName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-tarea-${assignment?.number ?? ""}-distribucion.tsv`;
@@ -1737,15 +2297,85 @@ function Distribution({
         <section className="panel image-export-panel">
           <div>
             <h3>Exportar imagen para WhatsApp</h3>
-            <p>Composición vertical legible en teléfono, generada como PNG real desde los datos.</p>
+            <p>
+              Composición vertical legible en teléfono, generada como PNG real
+              desde los datos.
+            </p>
           </div>
           <div className="image-export-controls">
-            <label>Formato<select value={imageOptions.view} onChange={(event) => { setImageOptions((current) => ({ ...current, view: event.target.value as DistributionImageOptions["view"] })); setImagePages([]); }}><option value="summary">Resumen por integrante</option><option value="cards">Tarjetas individuales</option><option value="matrix">Matriz clásica</option></select></label>
-            <label>Tamaño<select value={imageOptions.size} onChange={(event) => { setImageOptions((current) => ({ ...current, size: event.target.value as DistributionImageOptions["size"] })); setImagePages([]); }}><option value="whatsapp">WhatsApp</option><option value="high">Alta resolución</option></select></label>
-            <label>Nombre<select value={imageOptions.nameMode} onChange={(event) => { setImageOptions((current) => ({ ...current, nameMode: event.target.value as DistributionImageOptions["nameMode"] })); setImagePages([]); }}><option value="full">Nombre completo</option><option value="short">Nombre corto</option></select></label>
-            <label>Color principal<input type="color" value={imageOptions.primaryColor} onChange={(event) => { setImageOptions((current) => ({ ...current, primaryColor: event.target.value })); setImagePages([]); }} /></label>
+            <label>
+              Formato
+              <select
+                value={imageOptions.view}
+                onChange={(event) => {
+                  setImageOptions((current) => ({
+                    ...current,
+                    view: event.target
+                      .value as DistributionImageOptions["view"],
+                  }));
+                  setImagePages([]);
+                }}
+              >
+                <option value="summary">Resumen por integrante</option>
+                <option value="cards">Tarjetas individuales</option>
+                <option value="matrix">Matriz clásica</option>
+              </select>
+            </label>
+            <label>
+              Tamaño
+              <select
+                value={imageOptions.size}
+                onChange={(event) => {
+                  setImageOptions((current) => ({
+                    ...current,
+                    size: event.target
+                      .value as DistributionImageOptions["size"],
+                  }));
+                  setImagePages([]);
+                }}
+              >
+                <option value="whatsapp">WhatsApp</option>
+                <option value="high">Alta resolución</option>
+              </select>
+            </label>
+            <label>
+              Nombre
+              <select
+                value={imageOptions.nameMode}
+                onChange={(event) => {
+                  setImageOptions((current) => ({
+                    ...current,
+                    nameMode: event.target
+                      .value as DistributionImageOptions["nameMode"],
+                  }));
+                  setImagePages([]);
+                }}
+              >
+                <option value="full">Nombre completo</option>
+                <option value="short">Nombre corto</option>
+              </select>
+            </label>
+            <label>
+              Color principal
+              <input
+                type="color"
+                value={imageOptions.primaryColor}
+                onChange={(event) => {
+                  setImageOptions((current) => ({
+                    ...current,
+                    primaryColor: event.target.value,
+                  }));
+                  setImagePages([]);
+                }}
+              />
+            </label>
           </div>
-          {imageOptions.view === "matrix" && <p className="export-note"><strong>Matriz clásica.</strong> Recomendada para Excel o revisión interna. Para WhatsApp, use Resumen por integrante.</p>}
+          {imageOptions.view === "matrix" && (
+            <p className="export-note">
+              <strong>Matriz clásica.</strong> Recomendada para Excel o revisión
+              interna. Para WhatsApp, use Resumen por integrante.
+            </p>
+          )}
           <div className="image-export-checks">
             {[
               ["includeDueDate", "Fecha límite"],
@@ -1753,38 +2383,144 @@ function Distribution({
               ["includeTotal", "Cantidad total"],
               ["includeWeight", "Peso total"],
             ].map(([key, label]) => (
-              <label key={key}><input type="checkbox" checked={imageOptions[key as keyof DistributionImageOptions] as boolean} onChange={(event) => { setImageOptions((current) => ({ ...current, [key]: event.target.checked })); setImagePages([]); }} />{label}</label>
+              <label key={key}>
+                <input
+                  type="checkbox"
+                  checked={
+                    imageOptions[
+                      key as keyof DistributionImageOptions
+                    ] as boolean
+                  }
+                  onChange={(event) => {
+                    setImageOptions((current) => ({
+                      ...current,
+                      [key]: event.target.checked,
+                    }));
+                    setImagePages([]);
+                  }}
+                />
+                {label}
+              </label>
             ))}
           </div>
-          <label>Pie editable<textarea rows={3} value={imageOptions.footer} onChange={(event) => { setImageOptions((current) => ({ ...current, footer: event.target.value })); setImagePages([]); }} /></label>
+          <label>
+            Pie editable
+            <textarea
+              rows={3}
+              value={imageOptions.footer}
+              onChange={(event) => {
+                setImageOptions((current) => ({
+                  ...current,
+                  footer: event.target.value,
+                }));
+                setImagePages([]);
+              }}
+            />
+          </label>
           {generatedPage ? (
             <div className="image-preview">
               {/* eslint-disable-next-line @next/next/no-img-element -- vista SVG local generada, no es un recurso optimizable */}
-              <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(generatedPage.svg)}`} alt={`Vista previa ${generatedPage.filename}`} />
+              <img
+                src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(generatedPage.svg)}`}
+                alt={`Vista previa ${generatedPage.filename}`}
+              />
             </div>
-          ) : <div className="image-preview-empty">Pulsa “Generar imagen” para actualizar la vista previa.</div>}
-          {imagePages.length > 1 && <div className="preview-pages" aria-label="Páginas generadas">
-            {imagePages.map((page, index) => <button type="button" className={imagePageIndex === index ? "active" : ""} key={`${page.filename}-${index}`} onClick={() => setImagePageIndex(index)}>{imageOptions.view === "cards" ? (eligibleMembers[index]?.shortName || `Tarjeta ${index + 1}`) : `Parte ${index + 1}`}</button>)}
-          </div>}
+          ) : (
+            <div className="image-preview-empty">
+              Pulsa “Generar imagen” para actualizar la vista previa.
+            </div>
+          )}
+          {imagePages.length > 1 && (
+            <div className="preview-pages" aria-label="Páginas generadas">
+              {imagePages.map((page, index) => (
+                <button
+                  type="button"
+                  className={imagePageIndex === index ? "active" : ""}
+                  key={`${page.filename}-${index}`}
+                  onClick={() => setImagePageIndex(index)}
+                >
+                  {imageOptions.view === "cards"
+                    ? eligibleMembers[index]?.shortName ||
+                      `Tarjeta ${index + 1}`
+                    : `Parte ${index + 1}`}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="title-actions">
-            <button className="primary" disabled={!exercises.length} onClick={generateImages}>Generar imagen</button>
-            <button className="outline" disabled={!generatedPage} onClick={() => imageAction("download")}>Descargar PNG</button>
-            <button className="outline" disabled={!generatedPage} onClick={() => imageAction("copy")}>Copiar imagen</button>
-            <button className="outline" disabled={!generatedPage} onClick={() => imageAction("share")}>Compartir</button>
-            {imageOptions.view === "cards" && <button className="outline" disabled={!imagePages.length} onClick={downloadCardsZip}>Descargar tarjetas en ZIP</button>}
+            <button
+              className="primary"
+              disabled={!exercises.length}
+              onClick={generateImages}
+            >
+              Generar imagen
+            </button>
+            <button
+              className="outline"
+              disabled={!generatedPage}
+              onClick={() => imageAction("download")}
+            >
+              Descargar PNG
+            </button>
+            <button
+              className="outline"
+              disabled={!generatedPage}
+              onClick={() => imageAction("copy")}
+            >
+              Copiar imagen
+            </button>
+            <button
+              className="outline"
+              disabled={!generatedPage}
+              onClick={() => imageAction("share")}
+            >
+              Compartir
+            </button>
+            {imageOptions.view === "cards" && (
+              <button
+                className="outline"
+                disabled={!imagePages.length}
+                onClick={downloadCardsZip}
+              >
+                Descargar tarjetas en ZIP
+              </button>
+            )}
           </div>
         </section>
         <section className="panel whatsapp-panel">
           <h3>Mensaje para WhatsApp</h3>
-          <p>Editable antes de copiar o compartir; no se envía automáticamente.</p>
-          <textarea value={whatsapp} onChange={(event) => setWhatsapp(event.target.value)} rows={13} />
+          <p>
+            Editable antes de copiar o compartir; no se envía automáticamente.
+          </p>
+          <textarea
+            value={whatsapp}
+            onChange={(event) => setWhatsapp(event.target.value)}
+            rows={13}
+          />
           <div className="title-actions">
-            <button className="outline" onClick={() => setWhatsapp(generatedWhatsapp)}>Regenerar</button>
-            <button className="outline" onClick={() => copy(whatsapp, "Mensaje copiado.")}>Copiar mensaje</button>
+            <button
+              className="outline"
+              onClick={() => setWhatsapp(generatedWhatsapp)}
+            >
+              Regenerar
+            </button>
+            <button
+              className="outline"
+              onClick={() => copy(whatsapp, "Mensaje copiado.")}
+            >
+              Copiar mensaje
+            </button>
             <button
               className="primary"
-              disabled={typeof navigator !== "undefined" && !("share" in navigator)}
-              onClick={() => navigator.share?.({ text: whatsapp, title: `${courseName} - Tarea ${assignment?.number ?? ""}` })}
+              disabled={
+                typeof navigator !== "undefined" && !("share" in navigator)
+              }
+              onClick={() =>
+                navigator.share?.({
+                  text: whatsapp,
+                  title: `${courseName} - Tarea ${assignment?.number ?? ""}`,
+                })
+              }
             >
               Compartir
             </button>
@@ -1818,18 +2554,27 @@ function Submissions({ courses }: { courses: DashboardData }) {
   const [message, setMessage] = useState("");
   const expectedExercises =
     assignment?.sections.flatMap((section) =>
-      section.exercises.map((exercise) => ({ ...exercise, sectionName: section.name })),
+      section.exercises.map((exercise) => ({
+        ...exercise,
+        sectionName: section.name,
+      })),
     ) ?? [];
   const deliveredFiles =
     assignment?.submissions.flatMap((submission) =>
       submission.versions.flatMap((version) =>
-        version.files.map((file) => ({ ...file, memberId: submission.member.id })),
+        version.files.map((file) => ({
+          ...file,
+          memberId: submission.member.id,
+        })),
       ),
     ) ?? [];
   const exerciseFileCounts = new Map<string, number>();
   deliveredFiles.forEach((file) => {
     if (file.exerciseId)
-      exerciseFileCounts.set(file.exerciseId, (exerciseFileCounts.get(file.exerciseId) ?? 0) + 1);
+      exerciseFileCounts.set(
+        file.exerciseId,
+        (exerciseFileCounts.get(file.exerciseId) ?? 0) + 1,
+      );
   });
   const receivedExerciseIds = new Set(exerciseFileCounts.keys());
   const pendingExercises = expectedExercises.filter(
@@ -1840,16 +2585,29 @@ function Submissions({ courses }: { courses: DashboardData }) {
   );
   const wrongOwnerFiles = deliveredFiles.filter((file) => {
     if (!file.exerciseId) return false;
-    const exercise = expectedExercises.find((item) => item.id === file.exerciseId);
-    return exercise?.allocations[0]?.memberId && exercise.allocations[0].memberId !== file.memberId;
+    const exercise = expectedExercises.find(
+      (item) => item.id === file.exerciseId,
+    );
+    return (
+      exercise?.allocations[0]?.memberId &&
+      exercise.allocations[0].memberId !== file.memberId
+    );
   });
-  const excludedIds = new Set(assignment?.exclusions.map((item) => item.memberId) ?? []);
-  const submittedMemberIds = new Set(assignment?.submissions.map((item) => item.member.id) ?? []);
+  const excludedIds = new Set(
+    assignment?.exclusions.map((item) => item.memberId) ?? [],
+  );
+  const submittedMemberIds = new Set(
+    assignment?.submissions.map((item) => item.member.id) ?? [],
+  );
   const pendingMembers =
     assignment?.members.filter(
-      (member) => member.active && !excludedIds.has(member.id) && !submittedMemberIds.has(member.id),
+      (member) =>
+        member.active &&
+        !excludedIds.has(member.id) &&
+        !submittedMemberIds.has(member.id),
     ) ?? [];
-  const lateCount = assignment?.submissions.filter((submission) => submission.late).length ?? 0;
+  const lateCount =
+    assignment?.submissions.filter((submission) => submission.late).length ?? 0;
   const chooseFiles = (incoming: File[]) => {
     const allowed = new Set([
       "application/pdf",
@@ -1874,7 +2632,11 @@ function Submissions({ courses }: { courses: DashboardData }) {
     setProgress(0);
     const uploadId = crypto.randomUUID();
     try {
-      const completed: Array<{ pathname: string; originalName: string; exerciseId: string | null }> = [];
+      const completed: Array<{
+        pathname: string;
+        originalName: string;
+        exerciseId: string | null;
+      }> = [];
       for (const [index, file] of pending.entries()) {
         const payload = {
           assignmentId: assignment.id,
@@ -1893,30 +2655,51 @@ function Submissions({ courses }: { courses: DashboardData }) {
             contentType: file.type,
             multipart: file.size > 5 * 1024 * 1024,
             onUploadProgress: ({ percentage }) =>
-              setProgress(Math.round(((index + percentage / 100) / pending.length) * 100)),
+              setProgress(
+                Math.round(((index + percentage / 100) / pending.length) * 100),
+              ),
           },
         );
-        completed.push({ pathname: blob.pathname, originalName: file.name, exerciseId: exerciseId || null });
+        completed.push({
+          pathname: blob.pathname,
+          originalName: file.name,
+          exerciseId: exerciseId || null,
+        });
       }
       const response = await fetch("/api/submissions/complete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignmentId: assignment.id, memberId, uploadId, files: completed }),
+        body: JSON.stringify({
+          assignmentId: assignment.id,
+          memberId,
+          uploadId,
+          files: completed,
+        }),
       });
-      const result = (await response.json()) as { ok?: boolean; error?: string; version?: number };
-      if (!response.ok || !result.ok) throw new Error(result.error || "No se pudo registrar la entrega.");
+      const result = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        version?: number;
+      };
+      if (!response.ok || !result.ok)
+        throw new Error(result.error || "No se pudo registrar la entrega.");
       setPending([]);
       setProgress(100);
       setMessage(`Entrega guardada como versión ${result.version}.`);
       router.refresh();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "No se pudo cargar la entrega.");
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo cargar la entrega.",
+      );
     } finally {
       setUploading(false);
     }
   };
   const removeStored = async (fileId: string) => {
-    if (!window.confirm("¿Eliminar este archivo privado de forma permanente?")) return;
+    if (!window.confirm("¿Eliminar este archivo privado de forma permanente?"))
+      return;
     const response = await fetch(`/api/files/${fileId}`, { method: "DELETE" });
     if (!response.ok) {
       setMessage("No se pudo eliminar el archivo.");
@@ -1932,7 +2715,13 @@ function Submissions({ courses }: { courses: DashboardData }) {
           {assignment?.submissions.length ?? 0} entrega(s) registrada(s)
         </span>
       </Title>
-      {assignment && <PortalManager key={`${assignment.id}-${assignment.submissionPortal?.tokenVersion ?? 0}`} assignment={assignment} refresh={() => router.refresh()} />}
+      {assignment && (
+        <PortalManager
+          key={`${assignment.id}-${assignment.submissionPortal?.tokenVersion ?? 0}`}
+          assignment={assignment}
+          refresh={() => router.refresh()}
+        />
+      )}
       <div className="generator panel">
         <label>
           Tarea
@@ -1947,25 +2736,37 @@ function Submissions({ courses }: { courses: DashboardData }) {
             }}
           >
             {assignments.map((item) => (
-              <option key={item.id} value={item.id}>{item.courseName} · Tarea {item.number}</option>
+              <option key={item.id} value={item.id}>
+                {item.courseName} · Tarea {item.number}
+              </option>
             ))}
           </select>
         </label>
         <label>
           Integrante
-          <select value={memberId} onChange={(event) => setMemberId(event.target.value)}>
+          <select
+            value={memberId}
+            onChange={(event) => setMemberId(event.target.value)}
+          >
             {assignment?.members.map((member) => (
-              <option key={member.id} value={member.id}>{member.fullName}</option>
+              <option key={member.id} value={member.id}>
+                {member.fullName}
+              </option>
             ))}
           </select>
         </label>
         <label>
           Ejercicio asociado (opcional)
-          <select value={exerciseId} onChange={(event) => setExerciseId(event.target.value)}>
+          <select
+            value={exerciseId}
+            onChange={(event) => setExerciseId(event.target.value)}
+          >
             <option value="">Entrega general</option>
             {assignment?.sections.flatMap((section) =>
               section.exercises.map((exercise) => (
-                <option key={exercise.id} value={exercise.id}>{section.name} · {exercise.label}</option>
+                <option key={exercise.id} value={exercise.id}>
+                  {section.name} · {exercise.label}
+                </option>
               )),
             )}
           </select>
@@ -1980,7 +2781,9 @@ function Submissions({ courses }: { courses: DashboardData }) {
           multiple
           accept="application/pdf,image/png,image/jpeg,image/webp"
           disabled={!assignment || !memberId || uploading}
-          onChange={(event) => chooseFiles(Array.from(event.target.files || []))}
+          onChange={(event) =>
+            chooseFiles(Array.from(event.target.files || []))
+          }
         />
         <b>Seleccionar archivos</b>
       </label>
@@ -1998,7 +2801,10 @@ function Submissions({ courses }: { courses: DashboardData }) {
           <div className="panel-head">
             <div>
               <h3>Validación de cobertura por metadatos</h3>
-              <p>No se interpreta el contenido matemático; se usa el ejercicio asociado por el coordinador.</p>
+              <p>
+                No se interpreta el contenido matemático; se usa el ejercicio
+                asociado por el coordinador.
+              </p>
             </div>
           </div>
           <div className="coverage-grid">
@@ -2017,16 +2823,35 @@ function Submissions({ courses }: { courses: DashboardData }) {
               </div>
             ))}
           </div>
-          {(pendingExercises.length > 0 || duplicateExercises.length > 0 || wrongOwnerFiles.length > 0) && (
+          {(pendingExercises.length > 0 ||
+            duplicateExercises.length > 0 ||
+            wrongOwnerFiles.length > 0) && (
             <div className="coverage-details">
               {pendingExercises.length > 0 && (
-                <p><b>Pendientes:</b> {pendingExercises.map((exercise) => `${exercise.sectionName} ${exercise.label}`).join(", ")}</p>
+                <p>
+                  <b>Pendientes:</b>{" "}
+                  {pendingExercises
+                    .map(
+                      (exercise) => `${exercise.sectionName} ${exercise.label}`,
+                    )
+                    .join(", ")}
+                </p>
               )}
               {duplicateExercises.length > 0 && (
-                <p><b>Duplicados:</b> {duplicateExercises.map((exercise) => `${exercise.sectionName} ${exercise.label}`).join(", ")}</p>
+                <p>
+                  <b>Duplicados:</b>{" "}
+                  {duplicateExercises
+                    .map(
+                      (exercise) => `${exercise.sectionName} ${exercise.label}`,
+                    )
+                    .join(", ")}
+                </p>
               )}
               {wrongOwnerFiles.length > 0 && (
-                <p><b>Asignados a otra persona:</b> {wrongOwnerFiles.map((file) => file.originalName).join(", ")}</p>
+                <p>
+                  <b>Asignados a otra persona:</b>{" "}
+                  {wrongOwnerFiles.map((file) => file.originalName).join(", ")}
+                </p>
               )}
             </div>
           )}
@@ -2038,8 +2863,8 @@ function Submissions({ courses }: { courses: DashboardData }) {
             <FileText />
             <h3>Aún no hay archivos</h3>
             <p>
-              Selecciona una tarea, un integrante y los archivos recibidos.
-              Se almacenarán de forma privada y con historial de versiones.
+              Selecciona una tarea, un integrante y los archivos recibidos. Se
+              almacenarán de forma privada y con historial de versiones.
             </p>
           </div>
         ) : (
@@ -2049,13 +2874,25 @@ function Submissions({ courses }: { courses: DashboardData }) {
                 <div key={file.id}>
                   <FileText />
                   <span>
-                    <b>{submission.member.fullName} · {file.originalName}</b>
+                    <b>
+                      {submission.member.fullName} · {file.originalName}
+                    </b>
                     <small>
-                      Versión {version.version} · {(file.sizeBytes / 1024 / 1024).toFixed(2)} MB · {submission.late ? "Entrega tardía" : "Entregado"}
+                      Versión {version.version} ·{" "}
+                      {(file.sizeBytes / 1024 / 1024).toFixed(2)} MB ·{" "}
+                      {submission.late ? "Entrega tardía" : "Entregado"}
                     </small>
                   </span>
-                  <a className="outline" href={`/api/files/${file.id}`} target="_blank">Ver</a>
-                  <button onClick={() => removeStored(file.id)}>Eliminar</button>
+                  <a
+                    className="outline"
+                    href={`/api/files/${file.id}`}
+                    target="_blank"
+                  >
+                    Ver
+                  </a>
+                  <button onClick={() => removeStored(file.id)}>
+                    Eliminar
+                  </button>
                 </div>
               )),
             ),
@@ -2075,7 +2912,8 @@ function Evaluation({ courses }: { courses: DashboardData }) {
           courseName: course.name,
           members: course.members,
           templateName: course.templates[0]?.name ?? "Evaluación semanal",
-          templateCriteria: course.templates[0]?.criteria ?? DEFAULT_EVALUATION_CRITERIA,
+          templateCriteria:
+            course.templates[0]?.criteria ?? DEFAULT_EVALUATION_CRITERIA,
         })),
       ),
     [courses],
@@ -2091,10 +2929,16 @@ function Evaluation({ courses }: { courses: DashboardData }) {
         );
         return [
           member.id,
-          (item?.templateCriteria ?? DEFAULT_EVALUATION_CRITERIA).map((criterion) => {
-            const previous = stored?.scores.find((score) => score.criterion.name === criterion.name);
-            return previous ? Math.min(previous.score, criterion.maxScore) : criterion.maxScore;
-          }),
+          (item?.templateCriteria ?? DEFAULT_EVALUATION_CRITERIA).map(
+            (criterion) => {
+              const previous = stored?.scores.find(
+                (score) => score.criterion.name === criterion.name,
+              );
+              return previous
+                ? Math.min(previous.score, criterion.maxScore)
+                : criterion.maxScore;
+            },
+          ),
         ];
       }),
     ) as Record<string, number[]>;
@@ -2107,7 +2951,10 @@ function Evaluation({ courses }: { courses: DashboardData }) {
         return [
           member.id,
           (item?.templateCriteria ?? DEFAULT_EVALUATION_CRITERIA).map(
-            (criterion) => stored?.scores.find((score) => score.criterion.name === criterion.name)?.reason ?? "",
+            (criterion) =>
+              stored?.scores.find(
+                (score) => score.criterion.name === criterion.name,
+              )?.reason ?? "",
           ),
         ];
       }),
@@ -2116,7 +2963,9 @@ function Evaluation({ courses }: { courses: DashboardData }) {
     Object.fromEntries(
       (item?.members ?? []).map((member) => [
         member.id,
-        item?.evaluations.find((evaluation) => evaluation.memberId === member.id)?.comments ?? "",
+        item?.evaluations.find(
+          (evaluation) => evaluation.memberId === member.id,
+        )?.comments ?? "",
       ]),
     ) as Record<string, string>;
   const [scores, setScores] = useState<Record<string, number[]>>(() =>
@@ -2132,50 +2981,68 @@ function Evaluation({ courses }: { courses: DashboardData }) {
   const [saving, startSaving] = useTransition();
   const router = useRouter();
   const [editingTemplate, setEditingTemplate] = useState(false);
-  const [templateName, setTemplateName] = useState(assignment?.templateName ?? "Evaluación semanal");
+  const [templateName, setTemplateName] = useState(
+    assignment?.templateName ?? "Evaluación semanal",
+  );
   const [templateCriteria, setTemplateCriteria] = useState(() =>
     criteria.map(({ name, maxScore }) => ({ name, maxScore })),
   );
-  const setScore = (memberId: string, criterionIndex: number, value: number) =>
-    {
-      setScores((current) => ({
+  const setScore = (
+    memberId: string,
+    criterionIndex: number,
+    value: number,
+  ) => {
+    setScores((current) => ({
+      ...current,
+      [memberId]: (
+        current[memberId] ?? criteria.map((criterion) => criterion.maxScore)
+      ).map((score, index) => (index === criterionIndex ? value : score)),
+    }));
+    if (value === criteria[criterionIndex].maxScore)
+      setReasons((current) => ({
         ...current,
-        [memberId]: (current[memberId] ?? criteria.map((criterion) => criterion.maxScore)).map(
-          (score, index) => (index === criterionIndex ? value : score),
+        [memberId]: (current[memberId] ?? criteria.map(() => "")).map(
+          (reason, index) => (index === criterionIndex ? "" : reason),
         ),
       }));
-      if (value === criteria[criterionIndex].maxScore)
-        setReasons((current) => ({
-          ...current,
-          [memberId]: (current[memberId] ?? criteria.map(() => "")).map(
-            (reason, index) => (index === criterionIndex ? "" : reason),
-          ),
-        }));
-    };
-  const applyAll = () =>
-    {
-      setScores(
-        Object.fromEntries(
-          (assignment?.members ?? []).map((member) => [
-            member.id,
-            criteria.map((criterion) => criterion.maxScore),
-          ]),
-        ),
-      );
-      setReasons(
-        Object.fromEntries(
-          (assignment?.members ?? []).map((member) => [member.id, criteria.map(() => "")]),
-        ),
-      );
-    };
-  const copyRowToAll = (memberId: string) => {
-    const sourceScores = scores[memberId] ?? criteria.map((criterion) => criterion.maxScore);
-    const sourceReasons = reasons[memberId] ?? criteria.map(() => "");
+  };
+  const applyAll = () => {
     setScores(
-      Object.fromEntries((assignment?.members ?? []).map((member) => [member.id, [...sourceScores]])),
+      Object.fromEntries(
+        (assignment?.members ?? []).map((member) => [
+          member.id,
+          criteria.map((criterion) => criterion.maxScore),
+        ]),
+      ),
     );
     setReasons(
-      Object.fromEntries((assignment?.members ?? []).map((member) => [member.id, [...sourceReasons]])),
+      Object.fromEntries(
+        (assignment?.members ?? []).map((member) => [
+          member.id,
+          criteria.map(() => ""),
+        ]),
+      ),
+    );
+  };
+  const copyRowToAll = (memberId: string) => {
+    const sourceScores =
+      scores[memberId] ?? criteria.map((criterion) => criterion.maxScore);
+    const sourceReasons = reasons[memberId] ?? criteria.map(() => "");
+    setScores(
+      Object.fromEntries(
+        (assignment?.members ?? []).map((member) => [
+          member.id,
+          [...sourceScores],
+        ]),
+      ),
+    );
+    setReasons(
+      Object.fromEntries(
+        (assignment?.members ?? []).map((member) => [
+          member.id,
+          [...sourceReasons],
+        ]),
+      ),
     );
     setMessage("Valores de la fila copiados a todos los integrantes.");
   };
@@ -2189,14 +3056,14 @@ function Evaluation({ courses }: { courses: DashboardData }) {
     <>
       <Title eyebrow="Revisión rápida" title="Evaluación del grupo">
         <div className="title-actions">
+          <button className="outline" disabled={!assignment} onClick={applyAll}>
+            Aplicar 20 a todos
+          </button>
           <button
             className="outline"
             disabled={!assignment}
-            onClick={applyAll}
+            onClick={resetEvaluation}
           >
-            Aplicar 20 a todos
-          </button>
-          <button className="outline" disabled={!assignment} onClick={resetEvaluation}>
             Restablecer
           </button>
           <button
@@ -2237,7 +3104,9 @@ function Evaluation({ courses }: { courses: DashboardData }) {
               setComments(makeComments(next));
               setTemplateName(next?.templateName ?? "Evaluación semanal");
               setTemplateCriteria(
-                (next?.templateCriteria ?? DEFAULT_EVALUATION_CRITERIA).map(({ name, maxScore }) => ({ name, maxScore })),
+                (next?.templateCriteria ?? DEFAULT_EVALUATION_CRITERIA).map(
+                  ({ name, maxScore }) => ({ name, maxScore }),
+                ),
               );
               setEditingTemplate(false);
               setMessage("");
@@ -2255,28 +3124,110 @@ function Evaluation({ courses }: { courses: DashboardData }) {
         <div className="section-heading">
           <div>
             <h3>Rúbrica del curso</h3>
-            <p>{assignment?.templateName ?? "Evaluación semanal"} · máximo {criteria.reduce((sum, item) => sum + item.maxScore, 0)} puntos</p>
+            <p>
+              {assignment?.templateName ?? "Evaluación semanal"} · máximo{" "}
+              {criteria.reduce((sum, item) => sum + item.maxScore, 0)} puntos
+            </p>
           </div>
-          <button className="outline" disabled={!assignment} onClick={() => setEditingTemplate((value) => !value)}>
+          <button
+            className="outline"
+            disabled={!assignment}
+            onClick={() => setEditingTemplate((value) => !value)}
+          >
             {editingTemplate ? "Cancelar edición" : "Editar criterios"}
           </button>
         </div>
         {editingTemplate && assignment && (
           <>
-            <label>Nombre de la plantilla<input value={templateName} onChange={(event) => setTemplateName(event.target.value)} /></label>
+            <label>
+              Nombre de la plantilla
+              <input
+                value={templateName}
+                onChange={(event) => setTemplateName(event.target.value)}
+              />
+            </label>
             {templateCriteria.map((criterion, index) => (
               <div className="two" key={index}>
-                <label>Criterio {index + 1}<input value={criterion.name} onChange={(event) => setTemplateCriteria((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} /></label>
-                <label>Máximo<input type="number" min="1" max="100" value={criterion.maxScore} onChange={(event) => setTemplateCriteria((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, maxScore: Number(event.target.value) } : item))} /></label>
-                {templateCriteria.length > 1 && <button className="outline" onClick={() => setTemplateCriteria((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Quitar criterio</button>}
+                <label>
+                  Criterio {index + 1}
+                  <input
+                    value={criterion.name}
+                    onChange={(event) =>
+                      setTemplateCriteria((current) =>
+                        current.map((item, itemIndex) =>
+                          itemIndex === index
+                            ? { ...item, name: event.target.value }
+                            : item,
+                        ),
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  Máximo
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={criterion.maxScore}
+                    onChange={(event) =>
+                      setTemplateCriteria((current) =>
+                        current.map((item, itemIndex) =>
+                          itemIndex === index
+                            ? { ...item, maxScore: Number(event.target.value) }
+                            : item,
+                        ),
+                      )
+                    }
+                  />
+                </label>
+                {templateCriteria.length > 1 && (
+                  <button
+                    className="outline"
+                    onClick={() =>
+                      setTemplateCriteria((current) =>
+                        current.filter((_, itemIndex) => itemIndex !== index),
+                      )
+                    }
+                  >
+                    Quitar criterio
+                  </button>
+                )}
               </div>
             ))}
-            {templateCriteria.length < 10 && <button className="outline" onClick={() => setTemplateCriteria((current) => [...current, { name: "Nuevo criterio", maxScore: 20 }])}>Agregar criterio</button>}
-            <button className="primary" disabled={saving} onClick={() => startSaving(async () => {
-              const result = await saveEvaluationTemplate({ courseId: assignment.courseId, name: templateName, criteria: templateCriteria });
-              setMessage(result.message);
-              if (result.ok) { setEditingTemplate(false); router.refresh(); }
-            })}>Guardar plantilla</button>
+            {templateCriteria.length < 10 && (
+              <button
+                className="outline"
+                onClick={() =>
+                  setTemplateCriteria((current) => [
+                    ...current,
+                    { name: "Nuevo criterio", maxScore: 20 },
+                  ])
+                }
+              >
+                Agregar criterio
+              </button>
+            )}
+            <button
+              className="primary"
+              disabled={saving}
+              onClick={() =>
+                startSaving(async () => {
+                  const result = await saveEvaluationTemplate({
+                    courseId: assignment.courseId,
+                    name: templateName,
+                    criteria: templateCriteria,
+                  });
+                  setMessage(result.message);
+                  if (result.ok) {
+                    setEditingTemplate(false);
+                    router.refresh();
+                  }
+                })
+              }
+            >
+              Guardar plantilla
+            </button>
           </>
         )}
       </div>
@@ -2323,14 +3274,27 @@ function Evaluation({ courses }: { courses: DashboardData }) {
                         )
                       }
                     />
-                    <div className="score-quick" aria-label={`Notas rápidas de ${c.name} para ${m.fullName}`}>
-                      {[c.maxScore, c.maxScore * 0.9, c.maxScore * 0.75, c.maxScore * 0.5, 0].map((value) => (
-                        <button key={value} onClick={() => setScore(m.id, criterionIndex, value)}>
+                    <div
+                      className="score-quick"
+                      aria-label={`Notas rápidas de ${c.name} para ${m.fullName}`}
+                    >
+                      {[
+                        c.maxScore,
+                        c.maxScore * 0.9,
+                        c.maxScore * 0.75,
+                        c.maxScore * 0.5,
+                        0,
+                      ].map((value) => (
+                        <button
+                          key={value}
+                          onClick={() => setScore(m.id, criterionIndex, value)}
+                        >
                           {value}
                         </button>
                       ))}
                     </div>
-                    {(scores[m.id]?.[criterionIndex] ?? c.maxScore) < c.maxScore && (
+                    {(scores[m.id]?.[criterionIndex] ?? c.maxScore) <
+                      c.maxScore && (
                       <input
                         className="score-reason"
                         value={reasons[m.id]?.[criterionIndex] ?? ""}
@@ -2340,9 +3304,12 @@ function Evaluation({ courses }: { courses: DashboardData }) {
                         onChange={(event) =>
                           setReasons((current) => ({
                             ...current,
-                            [m.id]: (current[m.id] ?? criteria.map(() => "")).map(
-                              (reason, index) =>
-                                index === criterionIndex ? event.target.value : reason,
+                            [m.id]: (
+                              current[m.id] ?? criteria.map(() => "")
+                            ).map((reason, index) =>
+                              index === criterionIndex
+                                ? event.target.value
+                                : reason,
                             ),
                           }))
                         }
@@ -2352,10 +3319,10 @@ function Evaluation({ courses }: { courses: DashboardData }) {
                 ))}
                 <td>
                   <strong>
-                    {(scores[m.id] ?? criteria.map((criterion) => criterion.maxScore)).reduce(
-                      (total, score) => total + score,
-                      0,
-                    )}
+                    {(
+                      scores[m.id] ??
+                      criteria.map((criterion) => criterion.maxScore)
+                    ).reduce((total, score) => total + score, 0)}
                   </strong>
                 </td>
                 <td>
@@ -2365,12 +3332,18 @@ function Evaluation({ courses }: { courses: DashboardData }) {
                     maxLength={1000}
                     aria-label={`Comentario de ${m.fullName}`}
                     onChange={(event) =>
-                      setComments((current) => ({ ...current, [m.id]: event.target.value }))
+                      setComments((current) => ({
+                        ...current,
+                        [m.id]: event.target.value,
+                      }))
                     }
                   />
                 </td>
                 <td>
-                  <button className="outline" onClick={() => copyRowToAll(m.id)}>
+                  <button
+                    className="outline"
+                    onClick={() => copyRowToAll(m.id)}
+                  >
                     Copiar fila a todos
                   </button>
                 </td>
@@ -2380,7 +3353,8 @@ function Evaluation({ courses }: { courses: DashboardData }) {
         </table>
       </div>
       <p className="notice">
-        <CheckCircle2 /> {criteria.reduce((sum, item) => sum + item.maxScore, 0) === 100
+        <CheckCircle2 />{" "}
+        {criteria.reduce((sum, item) => sum + item.maxScore, 0) === 100
           ? "La suma máxima de los criterios es 100 puntos."
           : `Advertencia: la suma máxima es ${criteria.reduce((sum, item) => sum + item.maxScore, 0)}, no 100.`}
       </p>
@@ -2413,12 +3387,20 @@ function PdfBuilder({
   onMoveFile: (fileId: string, direction: -1 | 1) => void;
   onConfigureFile: (
     fileId: string,
-    options: Pick<StoredPdfSource, "rotation" | "selectedPages" | "cropPercent">,
+    options: Pick<
+      StoredPdfSource,
+      "rotation" | "selectedPages" | "cropPercent"
+    >,
   ) => void;
   onMoveFileTo: (fileId: string, targetId: string) => void;
   imageQuality: ImageQuality;
   setImageQuality: (quality: ImageQuality) => void;
-  builds: Array<{ id: string; version: number; sizeBytes: number | null; createdAt: string }>;
+  builds: Array<{
+    id: string;
+    version: number;
+    sizeBytes: number | null;
+    createdAt: string;
+  }>;
 }) {
   const [savingReport, startSavingReport] = useTransition();
   const [savingConfiguration, startSavingConfiguration] = useTransition();
@@ -2426,7 +3408,10 @@ function PdfBuilder({
   const [configurationMessage, setConfigurationMessage] = useState("");
   const [pageInputs, setPageInputs] = useState<Record<string, string>>(() =>
     Object.fromEntries(
-      storedFiles.map((file) => [file.id, formatPageSelection(file.selectedPages)]),
+      storedFiles.map((file) => [
+        file.id,
+        formatPageSelection(file.selectedPages),
+      ]),
     ),
   );
   const blocks = [
@@ -2441,11 +3426,17 @@ function PdfBuilder({
   return (
     <>
       <Title eyebrow="Constructor final" title="Compilar PDF">
-        <button className="primary" onClick={download} disabled={!assignmentId || generating}>
-          <FileDown size={17} /> {generating ? "Generando PDF…" : "Generar y descargar"}
+        <button
+          className="primary"
+          data-tutorial="generate-pdf"
+          onClick={download}
+          disabled={!assignmentId || generating}
+        >
+          <FileDown size={17} />{" "}
+          {generating ? "Generando PDF…" : "Generar y descargar"}
         </button>
       </Title>
-      <div className="panel report-editor">
+      <div className="panel report-editor" data-tutorial="weekly-report">
         <div>
           <h3>Reporte de desempeño semanal</h3>
           <p>
@@ -2476,7 +3467,9 @@ function PdfBuilder({
           </button>
           <button
             className="primary"
-            disabled={!assignmentId || reportBody.trim().length < 50 || savingReport}
+            disabled={
+              !assignmentId || reportBody.trim().length < 50 || savingReport
+            }
             onClick={() =>
               assignmentId &&
               startSavingReport(async () => {
@@ -2502,8 +3495,21 @@ function PdfBuilder({
             {builds.map((build) => (
               <div key={build.id}>
                 <FileText />
-                <span><b>Versión {build.version}</b><small>{new Date(build.createdAt).toLocaleString("es-GT", { timeZone: "America/Guatemala" })} · {build.sizeBytes ? `${(build.sizeBytes / 1024 / 1024).toFixed(2)} MB` : "Tamaño no disponible"}</small></span>
-                <a className="outline" href={`/api/pdf-builds/${build.id}`}>Descargar</a>
+                <span>
+                  <b>Versión {build.version}</b>
+                  <small>
+                    {new Date(build.createdAt).toLocaleString("es-GT", {
+                      timeZone: "America/Guatemala",
+                    })}{" "}
+                    ·{" "}
+                    {build.sizeBytes
+                      ? `${(build.sizeBytes / 1024 / 1024).toFixed(2)} MB`
+                      : "Tamaño no disponible"}
+                  </small>
+                </span>
+                <a className="outline" href={`/api/pdf-builds/${build.id}`}>
+                  Descargar
+                </a>
               </div>
             ))}
           </div>
@@ -2514,14 +3520,19 @@ function PdfBuilder({
           <div className="panel-head">
             <div>
               <h3>Orden y páginas</h3>
-              <p>Arrastra entregas para ordenarlas, rota su contenido y elige páginas con rangos como 1-3,5.</p>
+              <p>
+                Arrastra entregas para ordenarlas, rota su contenido y elige
+                páginas con rangos como 1-3,5.
+              </p>
             </div>
             <div className="quality-actions">
               <label>
                 Calidad de imágenes
                 <select
                   value={imageQuality}
-                  onChange={(event) => setImageQuality(event.target.value as ImageQuality)}
+                  onChange={(event) =>
+                    setImageQuality(event.target.value as ImageQuality)
+                  }
                 >
                   <option value="high">Alta - 2400 px / 90%</option>
                   <option value="balanced">Equilibrada - 1800 px / 78%</option>
@@ -2545,7 +3556,9 @@ function PdfBuilder({
                                 file.pageCount ?? undefined,
                               )
                             : undefined,
-                        cropPercent: file.mimeType.startsWith("image/") ? file.cropPercent ?? 0 : undefined,
+                        cropPercent: file.mimeType.startsWith("image/")
+                          ? (file.cropPercent ?? 0)
+                          : undefined,
                       }));
                       const result = await savePdfConfiguration({
                         assignmentId,
@@ -2555,7 +3568,9 @@ function PdfBuilder({
                       setConfigurationMessage(result.message);
                     } catch (error) {
                       setConfigurationMessage(
-                        error instanceof Error ? error.message : "Configuración inválida.",
+                        error instanceof Error
+                          ? error.message
+                          : "Configuración inválida.",
                       );
                     }
                   })
@@ -2565,7 +3580,9 @@ function PdfBuilder({
               </button>
             </div>
           </div>
-          {configurationMessage && <p className="notice">{configurationMessage}</p>}
+          {configurationMessage && (
+            <p className="notice">{configurationMessage}</p>
+          )}
           {blocks.map((b, i) => (
             <div
               className="block"
@@ -2574,7 +3591,10 @@ function PdfBuilder({
               onDragStart={(event) => {
                 if (i >= 6) {
                   event.dataTransfer.effectAllowed = "move";
-                  event.dataTransfer.setData("text/plain", storedFiles[i - 6].id);
+                  event.dataTransfer.setData(
+                    "text/plain",
+                    storedFiles[i - 6].id,
+                  );
                 }
               }}
               onDragOver={(event) => {
@@ -2606,7 +3626,11 @@ function PdfBuilder({
                       value={storedFiles[i - 6].rotation ?? 0}
                       onChange={(event) =>
                         onConfigureFile(storedFiles[i - 6].id, {
-                          rotation: Number(event.target.value) as 0 | 90 | 180 | 270,
+                          rotation: Number(event.target.value) as
+                            | 0
+                            | 90
+                            | 180
+                            | 270,
                         })
                       }
                     >
@@ -2640,7 +3664,9 @@ function PdfBuilder({
                               setConfigurationMessage("");
                             } catch (error) {
                               setConfigurationMessage(
-                                error instanceof Error ? error.message : "Selección inválida.",
+                                error instanceof Error
+                                  ? error.message
+                                  : "Selección inválida.",
                               );
                             }
                           }}
@@ -2655,7 +3681,9 @@ function PdfBuilder({
                             ...current,
                             [storedFiles[i - 6].id]: formatPageSelection(pages),
                           }));
-                          onConfigureFile(storedFiles[i - 6].id, { selectedPages: pages });
+                          onConfigureFile(storedFiles[i - 6].id, {
+                            selectedPages: pages,
+                          });
                         }}
                       />
                     </>
@@ -2669,7 +3697,14 @@ function PdfBuilder({
                         max="40"
                         value={storedFiles[i - 6].cropPercent ?? 0}
                         aria-label={`Recorte de ${b}`}
-                        onChange={(event) => onConfigureFile(storedFiles[i - 6].id, { cropPercent: Math.min(40, Math.max(0, Number(event.target.value))) })}
+                        onChange={(event) =>
+                          onConfigureFile(storedFiles[i - 6].id, {
+                            cropPercent: Math.min(
+                              40,
+                              Math.max(0, Number(event.target.value)),
+                            ),
+                          })
+                        }
                       />
                     </label>
                   )}

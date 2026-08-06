@@ -23,6 +23,11 @@ export function generatePortalToken() {
   return randomBytes(32).toString("base64url");
 }
 
+export function createPortalCredentials() {
+  const token = generatePortalToken();
+  return { token, tokenHash: hashPortalToken(token), tokenCipher: encryptPortalToken(token) };
+}
+
 export function hashPortalToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }

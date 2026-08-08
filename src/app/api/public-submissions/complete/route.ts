@@ -11,6 +11,7 @@ import { submissionPath } from "@/lib/submission-path";
 import {
   allowedExtension,
   createReceiptCode,
+  portalAcceptsPublicSession,
   portalState,
 } from "@/lib/submission-portal";
 
@@ -77,10 +78,21 @@ export async function POST(request: Request) {
   });
   if (
     !portal ||
-    !portal.enabled ||
-    portal.tokenVersion !== session.tokenVersion ||
-    !portal.assignment.course.members[0]?.active ||
-    portal.assignment.exclusions.length
+    !portalAcceptsPublicSession({
+      enabled: portal.enabled,
+      tokenVersion: portal.tokenVersion,
+      assignmentId: portal.assignmentId,
+      session,
+      activeMemberIds: portal.assignment.course.members
+        .filter((member) => member.active)
+        .map((member) => member.id),
+      excludedMemberIds: portal.assignment.exclusions.map(
+        (item) => item.memberId,
+      ),
+      allocatedMemberIds: portal.assignment.allocations.map(
+        (item) => item.memberId,
+      ),
+    })
   )
     return NextResponse.json(
       { error: "La sesión o el portal ya no son válidos." },

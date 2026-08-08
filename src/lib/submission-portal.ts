@@ -166,3 +166,26 @@ export function allowedExtension(mimeType: string) {
     } as Record<string, string>
   )[mimeType];
 }
+
+export function portalAcceptsPublicSession(input: {
+  enabled: boolean;
+  tokenVersion: number;
+  assignmentId: string;
+  session: {
+    tokenVersion: number;
+    assignmentId: string;
+    memberId: string;
+  };
+  activeMemberIds: string[];
+  excludedMemberIds: string[];
+  allocatedMemberIds: string[];
+}) {
+  return (
+    input.enabled &&
+    input.tokenVersion === input.session.tokenVersion &&
+    input.assignmentId === input.session.assignmentId &&
+    input.activeMemberIds.includes(input.session.memberId) &&
+    !input.excludedMemberIds.includes(input.session.memberId) &&
+    input.allocatedMemberIds.includes(input.session.memberId)
+  );
+}

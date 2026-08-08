@@ -8,6 +8,7 @@ import {
   generatePortalToken,
   hashPortalToken,
   normalizeCarnet,
+  portalAcceptsPublicSession,
   portalState,
   publicMemberReference,
   rateLimitDelay,
@@ -131,6 +132,50 @@ describe("seguridad del portal público", () => {
     expect(createReceiptCode("CAL2", 4, "Carlos Eduardo Díaz García")).toMatch(
       /^CAL2-T4-CEDG-[A-F0-9]{6}$/,
     );
+  });
+
+  it("mantiene válida la sesión cuando la exclusión pertenece a otro integrante", () => {
+    expect(
+      portalAcceptsPublicSession({
+        enabled: true,
+        tokenVersion: 1,
+        assignmentId: "assignment-1",
+        session: {
+          tokenVersion: 1,
+          assignmentId: "assignment-1",
+          memberId: "member-active",
+        },
+        activeMemberIds: ["member-active"],
+        excludedMemberIds: ["member-excluded"],
+        allocatedMemberIds: ["member-active"],
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    { excludedMemberIds: ["member-active"] },
+    { activeMemberIds: [] },
+    { allocatedMemberIds: [] },
+    { tokenVersion: 2 },
+    { assignmentId: "assignment-2" },
+    { enabled: false },
+  ])("rechaza solamente una sesión realmente inválida: $input", (override) => {
+    expect(
+      portalAcceptsPublicSession({
+        enabled: true,
+        tokenVersion: 1,
+        assignmentId: "assignment-1",
+        session: {
+          tokenVersion: 1,
+          assignmentId: "assignment-1",
+          memberId: "member-active",
+        },
+        activeMemberIds: ["member-active"],
+        excludedMemberIds: ["member-excluded"],
+        allocatedMemberIds: ["member-active"],
+        ...override,
+      }),
+    ).toBe(false);
   });
 
   it("firma una sesión limitada y rechaza una sesión expirada", async () => {

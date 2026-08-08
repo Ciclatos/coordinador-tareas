@@ -7,6 +7,7 @@ import {
   validCsrf,
 } from "@/lib/public-submission-session";
 import { submissionPath } from "@/lib/submission-path";
+import { portalAcceptsPublicSession } from "@/lib/submission-portal";
 
 export const runtime = "nodejs";
 const payloadSchema = z.object({
@@ -43,6 +44,11 @@ export async function POST(request: Request) {
           include: {
             assignment: {
               include: {
+                course: {
+                  include: {
+                    members: { where: { id: session.memberId } },
+                  },
+                },
                 exclusions: true,
                 allocations: true,
                 submissions: {
@@ -55,15 +61,21 @@ export async function POST(request: Request) {
         });
         if (
           !portal ||
-          !portal.enabled ||
-          portal.tokenVersion !== session.tokenVersion ||
-          portal.assignmentId !== session.assignmentId ||
-          portal.assignment.exclusions.some(
-            (item) => item.memberId === session.memberId,
-          ) ||
-          !portal.assignment.allocations.some(
-            (item) => item.memberId === session.memberId,
-          )
+          !portalAcceptsPublicSession({
+            enabled: portal.enabled,
+            tokenVersion: portal.tokenVersion,
+            assignmentId: portal.assignmentId,
+            session,
+            activeMemberIds: portal.assignment.course.members
+              .filter((member) => member.active)
+              .map((member) => member.id),
+            excludedMemberIds: portal.assignment.exclusions.map(
+              (item) => item.memberId,
+            ),
+            allocatedMemberIds: portal.assignment.allocations.map(
+              (item) => item.memberId,
+            ),
+          })
         )
           throw new Error("La sesión de entrega ya no es válida.");
         const previous = portal.assignment.submissions[0];

@@ -80,7 +80,6 @@ import {
   pngZip,
   svgToPng,
   type DistributionImageOptions,
-  type DistributionImagePage,
 } from "@/lib/distribution-image";
 
 type View =
@@ -1529,7 +1528,6 @@ function Distribution({
     "section" | "member" | "summary"
   >("member");
   const [exportMessage, setExportMessage] = useState("");
-  const [imagePages, setImagePages] = useState<DistributionImagePage[]>([]);
   const [imagePageIndex, setImagePageIndex] = useState(0);
   const [imageOptions, setImageOptions] = useState<DistributionImageOptions>({
     view: "summary",
@@ -1709,7 +1707,14 @@ function Distribution({
         members: eligibleMembers,
       })
     : "Crea una tarea para generar el mensaje.";
-  const [whatsapp, setWhatsapp] = useState(generatedWhatsapp);
+  const [whatsappDraft, setWhatsappDraft] = useState({
+    source: generatedWhatsapp,
+    value: generatedWhatsapp,
+  });
+  const whatsapp =
+    whatsappDraft.source === generatedWhatsapp
+      ? whatsappDraft.value
+      : generatedWhatsapp;
   const imageInput = assignment
     ? {
         courseName,
@@ -1723,16 +1728,12 @@ function Distribution({
         options: imageOptions,
       }
     : null;
-  const generatedPage = imagePages[imagePageIndex];
-  const generateImages = () => {
-    if (!imageInput) return;
-    const pages = createDistributionImages(imageInput);
-    setImagePages(pages);
-    setImagePageIndex(0);
-    setExportMessage(
-      `${pages.length} imagen${pages.length === 1 ? "" : "es"} generada${pages.length === 1 ? "" : "s"}.`,
-    );
-  };
+  const imagePages =
+    imageInput && distributionComplete
+      ? createDistributionImages(imageInput)
+      : [];
+  const generatedPage =
+    imagePages[Math.min(imagePageIndex, Math.max(0, imagePages.length - 1))];
   const imageAction = async (action: "copy" | "download" | "share") => {
     if (!assignment || !generatedPage) return;
     try {
@@ -2356,7 +2357,7 @@ function Distribution({
                     view: event.target
                       .value as DistributionImageOptions["view"],
                   }));
-                  setImagePages([]);
+                  setImagePageIndex(0);
                 }}
               >
                 <option value="summary">Resumen por integrante</option>
@@ -2374,7 +2375,7 @@ function Distribution({
                     size: event.target
                       .value as DistributionImageOptions["size"],
                   }));
-                  setImagePages([]);
+                  setImagePageIndex(0);
                 }}
               >
                 <option value="whatsapp">WhatsApp</option>
@@ -2391,7 +2392,7 @@ function Distribution({
                     nameMode: event.target
                       .value as DistributionImageOptions["nameMode"],
                   }));
-                  setImagePages([]);
+                  setImagePageIndex(0);
                 }}
               >
                 <option value="full">Nombre completo</option>
@@ -2408,7 +2409,7 @@ function Distribution({
                     ...current,
                     primaryColor: event.target.value,
                   }));
-                  setImagePages([]);
+                  setImagePageIndex(0);
                 }}
               />
             </label>
@@ -2439,7 +2440,7 @@ function Distribution({
                       ...current,
                       [key]: event.target.checked,
                     }));
-                    setImagePages([]);
+                    setImagePageIndex(0);
                   }}
                 />
                 {label}
@@ -2456,7 +2457,7 @@ function Distribution({
                   ...current,
                   footer: event.target.value,
                 }));
-                setImagePages([]);
+                setImagePageIndex(0);
               }}
             />
           </label>
@@ -2470,7 +2471,7 @@ function Distribution({
             </div>
           ) : (
             <div className="image-preview-empty">
-              Pulsa “Generar imagen” para actualizar la vista previa.
+              Completa la distribución para generar la vista previa automáticamente.
             </div>
           )}
           {imagePages.length > 1 && (
@@ -2491,13 +2492,9 @@ function Distribution({
             </div>
           )}
           <div className="title-actions">
-            <button
-              className="primary"
-              disabled={!exercises.length}
-              onClick={generateImages}
-            >
-              Generar imagen
-            </button>
+            <span className="save-status" aria-live="polite">
+              {generatedPage ? "Imagen actualizada automáticamente ✓" : "Esperando distribución"}
+            </span>
             <button
               className="outline"
               disabled={!generatedPage}
@@ -2533,17 +2530,27 @@ function Distribution({
         <section className="panel whatsapp-panel">
           <h3>Mensaje para WhatsApp</h3>
           <p>
-            Editable antes de copiar o compartir; no se envía automáticamente.
+            Se regenera al distribuir o redistribuir. Sigue siendo editable antes de copiar o compartir.
           </p>
           <textarea
             value={whatsapp}
-            onChange={(event) => setWhatsapp(event.target.value)}
+            onChange={(event) =>
+              setWhatsappDraft({
+                source: generatedWhatsapp,
+                value: event.target.value,
+              })
+            }
             rows={13}
           />
           <div className="title-actions">
             <button
               className="outline"
-              onClick={() => setWhatsapp(generatedWhatsapp)}
+              onClick={() =>
+                setWhatsappDraft({
+                  source: generatedWhatsapp,
+                  value: generatedWhatsapp,
+                })
+              }
             >
               Regenerar
             </button>

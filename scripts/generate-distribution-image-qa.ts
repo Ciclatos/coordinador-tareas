@@ -45,12 +45,11 @@ async function main() {
   const directory = path.resolve("output/qa");
   await mkdir(directory, { recursive: true });
   const summary = createDistributionImages(input);
-  if (summary.length < 2) throw new Error("El caso largo no se dividió en varias partes.");
+  if (summary.length !== 1) throw new Error("El resumen debe generarse en una sola imagen.");
   const card = createDistributionImages({ ...input, options: { ...options, view: "cards" } })[0];
   const matrix = createDistributionImages({ ...input, options: { ...options, view: "matrix", size: "high" } })[0];
   const results = await Promise.all([
     writePng(summary[0].svg, path.join(directory, "whatsapp-resumen.png")),
-    writePng(summary[1].svg, path.join(directory, "whatsapp-resumen-parte-2.png")),
     writePng(card.svg, path.join(directory, "tarjeta-integrante.png")),
     writePng(matrix.svg, path.join(directory, "matriz-clasica.png")),
   ]);

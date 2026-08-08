@@ -120,9 +120,7 @@ function summaryPages(input: DistributionImageInput): DistributionImagePage[] {
   const scale = width / 1080;
   const margin = Math.round(64 * scale);
   const contentWidth = width - margin * 2;
-  const maxHeight = Math.round((input.options.size === "high" ? 2800 : 1920));
   const lineHeight = Math.round(35 * scale);
-  const memberGap = Math.round(24 * scale);
   const labelX = margin + Math.round(28 * scale);
   const valueX = margin + Math.round(154 * scale);
   const valueChars = Math.max(24, Math.floor((contentWidth - (valueX - margin) - 28 * scale) / (14 * scale)));
@@ -143,21 +141,9 @@ function summaryPages(input: DistributionImageInput): DistributionImagePage[] {
     ...(input.options.includeInstructions ? [footerText] : []),
   ];
   const footerLines = footerSource.flatMap((line) => wrapTokens(line, 82));
-  const footerHeight = footerLines.length ? footerLines.length * Math.round(30 * scale) + Math.round(62 * scale) : Math.round(24 * scale);
-  const pageBlocks: typeof blocks[] = [];
-  let current: typeof blocks = [];
-  let used = firstTop;
-  for (const block of blocks) {
-    const reserved = footerHeight + margin;
-    if (current.length && used + block.height + memberGap + reserved > maxHeight) {
-      pageBlocks.push(current);
-      current = [];
-      used = continuedTop;
-    }
-    current.push(block);
-    used += block.height + memberGap;
-  }
-  if (current.length || !pageBlocks.length) pageBlocks.push(current);
+  // El resumen para WhatsApp siempre es una sola pieza. La altura crece según
+  // el contenido para conservar el tamaño tipográfico y todos los ejercicios.
+  const pageBlocks = [blocks];
   const base = `${slug(input.courseName) || "curso"}-tarea-${input.assignmentNumber}-distribucion`;
   return pageBlocks.map((items, pageIndex) => {
     const top = pageIndex ? continuedTop : firstTop;

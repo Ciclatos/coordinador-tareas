@@ -33,15 +33,16 @@ const input = { courseName: "Cálculo 2", assignmentNumber: 4, assignmentTitle: 
 describe("exportación visual de distribución", () => {
   it("genera un resumen vertical para seis integrantes, tres secciones y listas largas sin perder ejercicios", () => {
     const pages = createDistributionImages(input);
-    expect(pages.length).toBeGreaterThan(1);
-    expect(pages.every((page) => page.width === 1080 && page.height <= 1920)).toBe(true);
-    expect(pages[0].filename).toBe("calculo-2-tarea-4-distribucion-parte-1.png");
-    expect(pages[1].svg).toContain("Parte 2 de");
-    members.forEach((member) => expect(pages.some((page) => page.svg.includes(member.name))).toBe(true));
+    expect(pages).toHaveLength(1);
+    expect(pages[0].width).toBe(1080);
+    expect(pages[0].height).toBeGreaterThan(1920);
+    expect(pages[0].filename).toBe("calculo-2-tarea-4-distribucion.png");
+    expect(pages[0].svg).not.toContain("Parte 2 de");
+    members.forEach((member) => expect(pages[0].svg.includes(member.name)).toBe(true));
     for (const member of members) {
       const total = allocations.filter((allocation) => allocation.memberId === member.id).length;
       expect([38]).toContain(total);
-      expect(pages.some((page) => page.svg.includes(`Total: ${total} ejercicios`))).toBe(true);
+      expect(pages[0].svg.includes(`Total: ${total} ejercicios`)).toBe(true);
     }
     expect(pages.map((page) => page.svg).join("\n")).not.toContain("…");
   });

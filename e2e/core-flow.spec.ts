@@ -179,7 +179,6 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   await expect(imagePanel.getByLabel("Formato")).toHaveValue("summary");
   await expect(imagePanel.getByLabel("Tamaño")).toHaveValue("whatsapp");
   await expect(imagePanel.locator("select").nth(2)).toHaveValue("full");
-  await imagePanel.getByRole("button", { name: "Generar imagen" }).click();
   const preview = imagePanel.locator(".image-preview img");
   await expect(preview).toBeVisible();
   const pngDownload = page.waitForEvent("download");
@@ -200,7 +199,7 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   await page.setViewportSize({ width: 1280, height: 900 });
 
   await imagePanel.getByLabel("Formato").selectOption("cards");
-  await imagePanel.getByRole("button", { name: "Generar imagen" }).click();
+  await expect(imagePanel.getByText("Imagen actualizada automáticamente ✓")).toBeVisible();
   const zipDownload = page.waitForEvent("download");
   await imagePanel.getByRole("button", { name: "Descargar tarjetas en ZIP" }).click();
   const zip = await zipDownload;

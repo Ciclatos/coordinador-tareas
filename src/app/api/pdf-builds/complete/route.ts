@@ -12,6 +12,7 @@ const schema = z.object({
   assignmentId: z.string().cuid(),
   uploadId: z.string().uuid(),
   pathname: z.string().min(1).max(500),
+  contentSnapshotAt: z.string().datetime(),
   items: z.array(z.object({
     kind: z.string().min(1).max(30),
     sourceId: z.string().cuid().nullable().optional(),
@@ -51,6 +52,7 @@ export async function POST(request: Request) {
         status: "READY",
         storageKey: expected,
         sizeBytes: details.size,
+        contentSnapshotAt: new Date(parsed.data.contentSnapshotAt),
         items: { create: parsed.data.items.map((item, sortOrder) => ({ ...item, sortOrder })) },
       },
       select: { id: true, version: true },

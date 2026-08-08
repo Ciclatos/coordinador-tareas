@@ -230,7 +230,7 @@ export async function POST(request: Request) {
       });
       await tx.assignment.update({
         where: { id: session.assignmentId },
-        data: { status: "RECEIVING" },
+        data: { status: "RECEIVING", contentUpdatedAt: new Date() },
       });
       await tx.submissionAuditEvent.create({
         data: {

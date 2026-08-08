@@ -137,7 +137,7 @@ export async function POST(request: Request) {
       },
       select: { id: true, version: true },
     });
-    await tx.assignment.update({ where: { id: assignmentId }, data: { status: "RECEIVING" } });
+    await tx.assignment.update({ where: { id: assignmentId }, data: { status: "RECEIVING", contentUpdatedAt: new Date() } });
     await tx.groupWorkloadSnapshot.updateMany({
       where: { assignmentId, memberId },
       data: { lateCount: late ? 1 : 0 },

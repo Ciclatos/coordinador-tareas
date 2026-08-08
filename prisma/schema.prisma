@@ -49,6 +49,21 @@ model User {
   profile          UserProfile?
   courses          Course[]
   tutorialProgress UserTutorialProgress[]
+  activeAssignments ActiveAssignmentPreference[]
+}
+
+model ActiveAssignmentPreference {
+  id           String     @id @default(cuid())
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId     String
+  course       Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  assignmentId String
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([userId, courseId])
+  @@index([assignmentId])
 }
 
 model UserTutorialProgress {
@@ -108,6 +123,7 @@ model Course {
   assignments     Assignment[]
   templates       EvaluationTemplate[]
   covers          CoverTemplate[]
+  activeAssignments ActiveAssignmentPreference[]
 
   @@index([userId, active])
 }
@@ -151,6 +167,7 @@ model Assignment {
   pdfOrder         Json?
   createdAt        DateTime                    @default(now())
   updatedAt        DateTime                    @updatedAt
+  contentUpdatedAt DateTime                    @default(now())
   sections         AssignmentSection[]
   allocations      ExerciseAssignment[]
   submissions      Submission[]
@@ -161,6 +178,7 @@ model Assignment {
   exclusions       AssignmentExclusion[]
   submissionPortal AssignmentSubmissionPortal?
   submissionAudit  SubmissionAuditEvent[]
+  activeForUsers   ActiveAssignmentPreference[]
 
   @@unique([courseId, number])
   @@index([courseId, status, dueAt])
@@ -337,6 +355,7 @@ model MemberEvaluation {
   member       CourseMember     @relation(fields: [memberId], references: [id])
   total        Float
   comments     String?
+  updatedAt    DateTime         @updatedAt
   scores       CriterionScore[]
 
   @@unique([assignmentId, memberId])
@@ -382,6 +401,7 @@ model PdfBuild {
   storageKey   String?
   sizeBytes    Int?
   createdAt    DateTime       @default(now())
+  contentSnapshotAt DateTime?
   items        PdfBuildItem[]
 
   @@unique([assignmentId, version])

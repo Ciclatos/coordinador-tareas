@@ -1,5 +1,5 @@
 "use client";
-import { Component, useMemo, useState, useTransition } from "react";
+import { Component, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { upload } from "@vercel/blob/client";
 import { useRouter } from "next/navigation";
 import {
@@ -32,6 +32,7 @@ import {
   type DistributionMode,
 } from "@/lib/domain";
 import { createAssignmentPdf, type StoredPdfSource } from "@/lib/pdf";
+import { isPdfBuildStale, resolveActiveAssignment } from "@/lib/active-assignment";
 import { logout } from "@/app/(auth)/actions";
 import type { DashboardData } from "@/data/dashboard";
 import { EntityModal, type EditableEntity } from "@/components/EntityModal";
@@ -49,6 +50,8 @@ import {
   savePdfConfiguration,
   resetCourseWorkloadBalance,
   saveWeeklyReport,
+  setActiveAssignment,
+  getFreshPdfContent,
   setAssignmentArchived,
   setCourseActive,
   setMemberActive,
@@ -194,6 +197,8 @@ export default function AppShell({
   initialData = [],
   tutorialEligible = false,
   tutorialProgress = [],
+  initialAssignmentId,
+  initialView,
 }: {
   currentUser?: {
     name: string;
@@ -207,9 +212,14 @@ export default function AppShell({
   initialData?: DashboardData;
   tutorialEligible?: boolean;
   tutorialProgress?: TutorialProgressDto[];
+  initialAssignmentId?: string;
+  initialView?: string;
 }) {
   const currentCourse = initialData[0];
-  const currentAssignment = currentCourse?.assignments[0];
+  const currentAssignment = resolveActiveAssignment(
+    currentCourse?.assignments ?? [],
+    initialAssignmentId,
+  );
   const members = useMemo(
     () =>
       initialData[0]?.members.map((member) => ({
@@ -224,7 +234,9 @@ export default function AppShell({
       })) ?? [],
     [initialData],
   );
-  const [view, setView] = useState<View>("Resumen");
+  const [view, setView] = useState<View>(() =>
+    nav.some(([label]) => label === initialView) ? (initialView as View) : "Resumen",
+  );
   const router = useRouter();
   const [mutating, startMutation] = useTransition();
   const [menu, setMenu] = useState(false);
@@ -374,7 +386,7 @@ export default function AppShell({
         (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex)
       );
     });
-  const currentAssignmentId = initialData[0]?.assignments[0]?.id;
+  const currentAssignmentId = currentAssignment?.id;
   const totals = useMemo(
     () =>
       members.map((m) => ({
@@ -386,6 +398,29 @@ export default function AppShell({
   const go = (v: View) => {
     setView(v);
     setMenu(false);
+    const params = new URLSearchParams();
+    if (currentAssignment?.id) params.set("assignment", currentAssignment.id);
+    params.set("view", v);
+    window.history.pushState(null, "", `/app?${params.toString()}`);
+  };
+  useEffect(() => {
+    const onPopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const nextView = params.get("view");
+      if (nextView && nav.some(([label]) => label === nextView))
+        setView(nextView as View);
+      const nextAssignment = params.get("assignment");
+      if (nextAssignment && nextAssignment !== currentAssignment?.id)
+        window.location.reload();
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [currentAssignment?.id]);
+  const changeAssignment = async (assignmentId: string) => {
+    const result = await setActiveAssignment(assignmentId);
+    if (!result.ok) return notify(result.message);
+    const params = new URLSearchParams({ assignment: assignmentId, view });
+    window.location.assign(`/app?${params.toString()}`);
   };
   const notify = (v: string) => {
     setToast(v);
@@ -427,6 +462,7 @@ export default function AppShell({
     setPdfGenerating(true);
     notify("Generando documento…");
     try {
+      const freshContent = await getFreshPdfContent(currentAssignment.id);
       const persistedExercises: Exercise[] = currentAssignment.sections.flatMap(
         (section) =>
           section.exercises.map((exercise) => ({
@@ -463,16 +499,8 @@ export default function AppShell({
         allocations: persistedAllocations.length
           ? persistedAllocations
           : allocations,
-        evaluations: currentAssignment.evaluations.map((evaluation) => ({
-          memberId: evaluation.memberId,
-          total: evaluation.total,
-          scores: evaluation.scores.map((score) => ({
-            name: score.criterion.name,
-            maxScore: score.criterion.maxScore,
-            score: score.score,
-          })),
-        })),
-        reportBody,
+        evaluations: freshContent.evaluations,
+        reportBody: freshContent.reportBody ?? reportBody,
         files: [],
         storedFiles: orderedStoredPdfFiles,
         imageQuality,
@@ -497,6 +525,7 @@ export default function AppShell({
           assignmentId: currentAssignment.id,
           uploadId,
           pathname: stored.pathname,
+          contentSnapshotAt: freshContent.contentUpdatedAt,
           items: [
             "REPORT_COVER",
             "GROUP_PERFORMANCE",
@@ -613,6 +642,18 @@ export default function AppShell({
                 : "Crea una tarea para comenzar"}
             </small>
           </div>
+          {currentCourse && currentCourse.assignments.length > 0 && (
+            <label className="active-assignment-selector">
+              <span>Tarea activa</span>
+              <select aria-label="Cambiar tarea activa" value={currentAssignment?.id ?? ""} onChange={(event) => void changeAssignment(event.target.value)}>
+                {currentCourse.assignments.filter((assignment) => assignment.status !== "ARCHIVED").map((assignment) => (
+                  <option key={assignment.id} value={assignment.id}>
+                    Tarea {assignment.number} — {assignment.title} · Semana {assignment.weekNumber} · {assignment.sections.map((section) => section.name).join(", ") || "sin secciones"}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <button className="outline" onClick={() => go("Configuración")}>
             <Settings size={16} /> Configurar
           </button>
@@ -715,10 +756,10 @@ export default function AppShell({
           )}{" "}
           {view === "Entregas" && (
             <SubmissionsErrorBoundary>
-              <Submissions courses={initialData} />
+              <Submissions courses={initialData} activeAssignmentId={currentAssignmentId} />
             </SubmissionsErrorBoundary>
           )}{" "}
-          {view === "Evaluación" && <Evaluation courses={initialData} />}{" "}
+          {view === "Evaluación" && <Evaluation courses={initialData} activeAssignmentId={currentAssignmentId} />}{" "}
           {view === "PDF final" && (
             <PdfBuilder
               storedFiles={orderedStoredPdfFiles}
@@ -772,6 +813,8 @@ export default function AppShell({
               reportBody={reportBody}
               setReportBody={setReportBody}
               builds={currentAssignment?.pdfBuilds ?? []}
+              contentUpdatedAt={currentAssignment?.contentUpdatedAt}
+              assignmentLabel={currentAssignment ? `Tarea ${currentAssignment.number}` : "Tarea"}
             />
           )}{" "}
           {view === "Configuración" && <SettingsView user={currentUser} />}
@@ -2531,7 +2574,7 @@ function Distribution({
     </>
   );
 }
-function Submissions({ courses }: { courses: DashboardData }) {
+function Submissions({ courses, activeAssignmentId }: { courses: DashboardData; activeAssignmentId?: string }) {
   const router = useRouter();
   const assignments = useMemo(
     () =>
@@ -2544,7 +2587,7 @@ function Submissions({ courses }: { courses: DashboardData }) {
       ),
     [courses],
   );
-  const [assignmentId, setAssignmentId] = useState(assignments[0]?.id ?? "");
+  const [assignmentId, setAssignmentId] = useState(activeAssignmentId ?? assignments[0]?.id ?? "");
   const assignment = assignments.find((item) => item.id === assignmentId);
   const [memberId, setMemberId] = useState(assignment?.members[0]?.id ?? "");
   const [exerciseId, setExerciseId] = useState("");
@@ -2902,7 +2945,7 @@ function Submissions({ courses }: { courses: DashboardData }) {
     </>
   );
 }
-function Evaluation({ courses }: { courses: DashboardData }) {
+function Evaluation({ courses, activeAssignmentId }: { courses: DashboardData; activeAssignmentId?: string }) {
   const assignments = useMemo(
     () =>
       courses.flatMap((course) =>
@@ -2918,7 +2961,7 @@ function Evaluation({ courses }: { courses: DashboardData }) {
       ),
     [courses],
   );
-  const [assignmentId, setAssignmentId] = useState(assignments[0]?.id ?? "");
+  const [assignmentId, setAssignmentId] = useState(activeAssignmentId ?? assignments[0]?.id ?? "");
   const assignment = assignments.find((item) => item.id === assignmentId);
   const criteria = assignment?.templateCriteria ?? DEFAULT_EVALUATION_CRITERIA;
   const makeScores = (item: (typeof assignments)[number] | undefined) =>
@@ -2969,16 +3012,18 @@ function Evaluation({ courses }: { courses: DashboardData }) {
       ]),
     ) as Record<string, string>;
   const [scores, setScores] = useState<Record<string, number[]>>(() =>
-    makeScores(assignments[0]),
+    makeScores(assignments.find((item) => item.id === activeAssignmentId) ?? assignments[0]),
   );
   const [reasons, setReasons] = useState<Record<string, string[]>>(() =>
-    makeReasons(assignments[0]),
+    makeReasons(assignments.find((item) => item.id === activeAssignmentId) ?? assignments[0]),
   );
   const [comments, setComments] = useState<Record<string, string>>(() =>
-    makeComments(assignments[0]),
+    makeComments(assignments.find((item) => item.id === activeAssignmentId) ?? assignments[0]),
   );
   const [message, setMessage] = useState("");
   const [saving, startSaving] = useTransition();
+  const evaluationMounted = useRef(false);
+  const evaluationSequence = useRef(0);
   const router = useRouter();
   const [editingTemplate, setEditingTemplate] = useState(false);
   const [templateName, setTemplateName] = useState(
@@ -3052,6 +3097,47 @@ function Evaluation({ courses }: { courses: DashboardData }) {
     setComments(makeComments(assignment));
     setMessage("Se restauraron los últimos valores guardados.");
   };
+  useEffect(() => {
+    if (!assignment) return;
+    if (!evaluationMounted.current) {
+      evaluationMounted.current = true;
+      return;
+    }
+    const invalidReason = assignment.members.some((member) =>
+      criteria.some(
+        (criterion, index) =>
+          (scores[member.id]?.[index] ?? criterion.maxScore) < criterion.maxScore &&
+          !(reasons[member.id]?.[index] ?? "").trim(),
+      ),
+    );
+    if (invalidReason) {
+      const warningTimer = window.setTimeout(
+        () => setMessage("Añade el motivo de cada reducción para completar el guardado automático."),
+        0,
+      );
+      return () => window.clearTimeout(warningTimer);
+    }
+    const sequence = ++evaluationSequence.current;
+    const timer = window.setTimeout(() => {
+      setMessage("Guardando…");
+      startSaving(async () => {
+        const result = await saveEvaluations({
+          assignmentId: assignment.id,
+          evaluations: assignment.members.map((member) => ({
+            memberId: member.id,
+            scores: scores[member.id] ?? criteria.map((item) => item.maxScore),
+            reasons: reasons[member.id] ?? criteria.map(() => ""),
+            comments: comments[member.id] ?? "",
+          })),
+        });
+        if (sequence === evaluationSequence.current) {
+          setMessage(result.ok ? "Guardado ✓" : `${result.message} — Reintentar`);
+          if (result.ok) router.refresh();
+        }
+      });
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [assignment, comments, criteria, reasons, router, scores]);
   return (
     <>
       <Title eyebrow="Revisión rápida" title="Evaluación del grupo">
@@ -3066,27 +3152,9 @@ function Evaluation({ courses }: { courses: DashboardData }) {
           >
             Restablecer
           </button>
-          <button
-            className="primary"
-            disabled={!assignment || saving}
-            onClick={() =>
-              assignment &&
-              startSaving(async () => {
-                const result = await saveEvaluations({
-                  assignmentId: assignment.id,
-                  evaluations: assignment.members.map((member) => ({
-                    memberId: member.id,
-                    scores: scores[member.id] ?? [20, 20, 20, 20, 20],
-                    reasons: reasons[member.id] ?? ["", "", "", "", ""],
-                    comments: comments[member.id] ?? "",
-                  })),
-                });
-                setMessage(result.message);
-              })
-            }
-          >
-            {saving ? "Guardando…" : "Guardar evaluaciones"}
-          </button>
+          <span className={`save-status ${saving ? "saving" : "saved"}`} aria-live="polite">
+            {saving ? "Guardando…" : message || "Guardado ✓"}
+          </span>
         </div>
       </Title>
       <div className="generator panel">
@@ -3376,6 +3444,8 @@ function PdfBuilder({
   imageQuality,
   setImageQuality,
   builds,
+  contentUpdatedAt,
+  assignmentLabel,
 }: {
   storedFiles: StoredPdfSource[];
   download: () => void;
@@ -3400,12 +3470,16 @@ function PdfBuilder({
     version: number;
     sizeBytes: number | null;
     createdAt: string;
+    contentSnapshotAt: string | null;
   }>;
+  contentUpdatedAt?: string;
+  assignmentLabel: string;
 }) {
   const [savingReport, startSavingReport] = useTransition();
   const [savingConfiguration, startSavingConfiguration] = useTransition();
   const [reportMessage, setReportMessage] = useState("");
   const [configurationMessage, setConfigurationMessage] = useState("");
+  const reportMounted = useRef(false);
   const [pageInputs, setPageInputs] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       storedFiles.map((file) => [
@@ -3423,9 +3497,26 @@ function PdfBuilder({
     "Integrantes del grupo",
     ...storedFiles.map((file) => file.name),
   ];
+  useEffect(() => {
+    if (!assignmentId || reportBody.trim().length < 50) return;
+    if (!reportMounted.current) {
+      reportMounted.current = true;
+      return;
+    }
+    setReportMessage("Guardando…");
+    const timer = window.setTimeout(() => {
+      startSavingReport(async () => {
+        const result = await saveWeeklyReport({ assignmentId, body: reportBody });
+        setReportMessage(result.ok ? "Guardado ✓" : `${result.message} — Reintentar`);
+      });
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [assignmentId, reportBody]);
+  const latestBuild = builds[0];
+  const pdfIsStale = isPdfBuildStale(contentUpdatedAt, latestBuild);
   return (
     <>
-      <Title eyebrow="Constructor final" title="Compilar PDF">
+      <Title eyebrow="Constructor final" title={`Generar PDF — ${assignmentLabel}`}>
         <button
           className="primary"
           data-tutorial="generate-pdf"
@@ -3436,6 +3527,12 @@ function PdfBuilder({
           {generating ? "Generando PDF…" : "Generar y descargar"}
         </button>
       </Title>
+      {pdfIsStale && (
+        <div className="notice warning pdf-stale" role="status">
+          <strong>PDF desactualizado.</strong> Hay cambios posteriores a la última generación.
+          <button className="outline" onClick={download}>Generar nueva versión</button>
+        </div>
+      )}
       <div className="panel report-editor" data-tutorial="weekly-report">
         <div>
           <h3>Reporte de desempeño semanal</h3>
@@ -3465,24 +3562,9 @@ function PdfBuilder({
           >
             Generar desde datos actuales
           </button>
-          <button
-            className="primary"
-            disabled={
-              !assignmentId || reportBody.trim().length < 50 || savingReport
-            }
-            onClick={() =>
-              assignmentId &&
-              startSavingReport(async () => {
-                const result = await saveWeeklyReport({
-                  assignmentId,
-                  body: reportBody,
-                });
-                setReportMessage(result.message);
-              })
-            }
-          >
-            {savingReport ? "Guardando…" : "Guardar texto editado"}
-          </button>
+          <span className="save-status" aria-live="polite">
+            {savingReport ? "Guardando…" : reportMessage || "Guardado ✓"}
+          </span>
         </div>
         {reportMessage && <p className="notice">{reportMessage}</p>}
       </div>

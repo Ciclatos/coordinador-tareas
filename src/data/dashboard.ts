@@ -65,6 +65,8 @@ export async function getDashboardData(userId: string) {
           dueAt: true,
           status: true,
           pdfOrder: true,
+          updatedAt: true,
+          contentUpdatedAt: true,
           submissionPortal: {
             select: {
               id: true,
@@ -145,6 +147,7 @@ export async function getDashboardData(userId: string) {
               memberId: true,
               total: true,
               comments: true,
+              updatedAt: true,
               scores: {
                 select: {
                   score: true,
@@ -176,6 +179,7 @@ export async function getDashboardData(userId: string) {
               version: true,
               sizeBytes: true,
               createdAt: true,
+              contentSnapshotAt: true,
             },
           },
           _count: { select: { sections: true, submissions: true } },
@@ -191,6 +195,8 @@ export async function getDashboardData(userId: string) {
         ? serializePortal(assignment.id, assignment.submissionPortal)
         : null,
       dueAt: assignment.dueAt.toISOString(),
+      updatedAt: assignment.updatedAt.toISOString(),
+      contentUpdatedAt: assignment.contentUpdatedAt.toISOString(),
       weekStart: assignment.weekStart.toISOString(),
       weekEnd: assignment.weekEnd.toISOString(),
       reports: assignment.reports.map((report) => ({
@@ -200,6 +206,11 @@ export async function getDashboardData(userId: string) {
       pdfBuilds: assignment.pdfBuilds.map((build) => ({
         ...build,
         createdAt: build.createdAt.toISOString(),
+        contentSnapshotAt: build.contentSnapshotAt?.toISOString() ?? null,
+      })),
+      evaluations: assignment.evaluations.map((evaluation) => ({
+        ...evaluation,
+        updatedAt: evaluation.updatedAt.toISOString(),
       })),
       submissions: assignment.submissions.map((submission) => ({
         ...submission,

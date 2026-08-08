@@ -664,7 +664,7 @@ export async function saveDistribution(
     }
     await tx.assignment.update({
       where: { id: assignment.id },
-      data: { status: "DISTRIBUTED" },
+      data: { status: "DISTRIBUTED", contentUpdatedAt: new Date() },
     });
     }, { maxWait: 10_000, timeout: 60_000 });
   } catch (error) {
@@ -728,6 +728,7 @@ export async function savePdfConfiguration(
     prisma.assignment.update({
       where: { id: assignment.id },
       data: {
+        contentUpdatedAt: new Date(),
         pdfOrder: {
           imageQuality: parsed.data.imageQuality,
           items: parsed.data.files.map((file, sortOrder) => ({
@@ -830,7 +831,7 @@ export async function saveEvaluations(
     }
     await tx.assignment.update({
       where: { id: assignment.id },
-      data: { status: "REVIEW" },
+      data: { status: "REVIEW", contentUpdatedAt: new Date() },
     });
     });
   } catch (error) {
@@ -941,6 +942,10 @@ export async function saveWeeklyReport(
       generatorVersion: parsed.data.body ? "edited-v1" : "template-v1",
     },
   });
+  await prisma.assignment.update({
+    where: { id: assignment.id },
+    data: { contentUpdatedAt: new Date() },
+  });
   revalidatePath("/app");
   return {
     ok: true,
@@ -948,6 +953,59 @@ export async function saveWeeklyReport(
     message: parsed.data.body
       ? "Reporte editado guardado."
       : "Reporte generado con los datos actuales.",
+  };
+}
+
+export async function setActiveAssignment(assignmentId: string) {
+  const { userId } = await requireSession();
+  const assignment = await prisma.assignment.findFirst({
+    where: { id: assignmentId, course: { userId } },
+    select: { id: true, courseId: true },
+  });
+  if (!assignment) return { ok: false, message: "No tienes acceso a esta tarea." };
+  await prisma.activeAssignmentPreference.upsert({
+    where: { userId_courseId: { userId, courseId: assignment.courseId } },
+    create: { userId, courseId: assignment.courseId, assignmentId: assignment.id },
+    update: { assignmentId: assignment.id },
+  });
+  return { ok: true, message: "Tarea activa actualizada." };
+}
+
+export async function getFreshPdfContent(assignmentId: string) {
+  const { userId } = await requireSession();
+  const assignment = await prisma.assignment.findFirst({
+    where: { id: assignmentId, course: { userId } },
+    select: {
+      contentUpdatedAt: true,
+      evaluations: {
+        select: {
+          memberId: true,
+          total: true,
+          scores: {
+            orderBy: { criterion: { sortOrder: "asc" } },
+            select: {
+              score: true,
+              criterion: { select: { name: true, maxScore: true } },
+            },
+          },
+        },
+      },
+      reports: { orderBy: { createdAt: "desc" }, take: 1, select: { body: true } },
+    },
+  });
+  if (!assignment) throw new Error("No tienes acceso a esta tarea.");
+  return {
+    contentUpdatedAt: assignment.contentUpdatedAt.toISOString(),
+    reportBody: assignment.reports[0]?.body ?? null,
+    evaluations: assignment.evaluations.map((evaluation) => ({
+      memberId: evaluation.memberId,
+      total: evaluation.total,
+      scores: evaluation.scores.map((score) => ({
+        name: score.criterion.name,
+        maxScore: score.criterion.maxScore,
+        score: score.score,
+      })),
+    })),
   };
 }
 

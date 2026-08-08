@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import {
   CheckCircle2,
   Copy,
@@ -108,6 +108,7 @@ export default function PortalManager({
   }>(null);
   const [reviewReason, setReviewReason] = useState("");
   const [busy, start] = useTransition();
+  const portalMounted = useRef(false);
   useEffect(() => {
     const timer = window.setInterval(refresh, 30_000);
     return () => window.clearInterval(timer);
@@ -149,6 +150,17 @@ export default function PortalManager({
         );
       }
     });
+  useEffect(() => {
+    if (!portal) return;
+    if (!portalMounted.current) {
+      portalMounted.current = true;
+      return;
+    }
+    setMessage("Guardando…");
+    const timer = window.setTimeout(() => save(), 750);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, opensAt, closesAt, late, replacements, maxReplacements, maxMb, images, instructions]);
   const regenerate = () => {
     if (
       !confirm(
@@ -178,7 +190,7 @@ export default function PortalManager({
       );
     }
   };
-  const shareText = `Hola, compañeros. Les comparto el enlace para entregar la Tarea ${assignment.number} de ${assignment.courseName}:\n\n${url}\n\nAl ingresar:\n1. Seleccionen su nombre.\n2. Confirmen su carné.\n3. Revisen sus ejercicios asignados.\n4. Suban un único archivo PDF legible.\n\nFecha límite: ${new Intl.DateTimeFormat("es-GT", { dateStyle: "medium", timeStyle: "short", timeZone: "America/Guatemala" }).format(new Date(assignment.dueAt))}.\n\nPor favor, verifiquen el archivo antes de enviarlo.`;
+  const shareText = `Hola, compañeros. Les comparto el enlace de entrega de la Tarea ${assignment.number} de ${assignment.courseName}.\n\nEste enlace corresponde únicamente a esta tarea:\n${url}\n\nFecha límite: ${new Intl.DateTimeFormat("es-GT", { dateStyle: "medium", timeStyle: "short", timeZone: "America/Guatemala" }).format(new Date(assignment.dueAt))}.\n\nSeleccionen su nombre, confirmen su carné y suban un único PDF legible.`;
   const applyReview = (
     submissionId: string,
     status: "APPROVED" | "NEEDS_CORRECTION" | "REJECTED",
@@ -211,8 +223,8 @@ export default function PortalManager({
             <Link2 /> Portal de entrega
           </h3>
           <p>
-            Enlace público seguro para que cada estudiante confirme su identidad
-            y entregue su archivo.
+            Portal de entrega de la Tarea {assignment.number}. Cada tarea genera
+            su propio enlace; este enlace pertenece únicamente a esta tarea.
           </p>
         </div>
         <span className={`pill ${enabled ? "success" : "neutral"}`}>
@@ -245,6 +257,10 @@ export default function PortalManager({
             <span>{label}</span>
           </div>
         ))}
+      </div>
+      <div className="portal-exclusive-note">
+        <strong>Enlace exclusivo de Tarea {assignment.number}</strong>
+        <span>Al crear otra tarea deberá generar y compartir su enlace correspondiente.</span>
       </div>
       <div className="generator">
         <label>
@@ -370,7 +386,11 @@ export default function PortalManager({
           </>
         )}
       </div>
-      {url && <input aria-label="Enlace público" readOnly value={url} />}{" "}
+      {url ? (
+        <input aria-label={`Enlace público exclusivo de Tarea ${assignment.number}`} readOnly value={url} />
+      ) : (
+        <div className="notice">Esta tarea todavía no tiene un enlace de entrega.</div>
+      )}{" "}
       {portal?.tokenIssue && (
         <div className="notice warning">
           {portal.tokenIssue} Use “Regenerar” para crear un enlace válido.

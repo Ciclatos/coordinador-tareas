@@ -96,7 +96,8 @@ function wrap(value: string, font: PDFFont, size: number, maxWidth: number) {
 }
 
 function header(page: PDFPage, title: string, subtitle: string, fonts: Fonts) {
-  page.drawRectangle({ x: 0, y: 748, width: 612, height: 44, color: dark });
+  page.drawRectangle({ x: 0, y: 744, width: 612, height: 48, color: dark });
+  page.drawRectangle({ x: 0, y: 744, width: 10, height: 48, color: green });
   drawText(page, title, 48, 768, 15, fonts.bold, { color: rgb(1, 1, 1) });
   drawText(page, subtitle, 48, 753, 8, fonts.regular, { color: rgb(0.84, 0.88, 0.85) });
 }
@@ -196,6 +197,7 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
     ["Sede y jornada", [data.course.campus, data.course.shift].filter(Boolean).join(" - ") || "No especificadas"],
     ["Semestre y sección", [data.course.semester, data.course.section].filter(Boolean).join(" - ") || "No especificados"],
   ];
+  page.drawRectangle({ x: 44, y: 354, width: 524, height: 282, color: rgb(0.975, 0.985, 0.98), borderColor: border, borderWidth: 0.8 });
   details.forEach(([label, value], index) => {
     const y = 610 - index * 43;
     drawText(page, label.toUpperCase(), 56, y, 7.5, fonts.bold, { color: muted });
@@ -257,7 +259,10 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
     const evaluation = data.evaluations.find((item) => item.memberId === member.id);
     const rowY = tableY - rowIndex * 40;
     page.drawRectangle({ x: tableX, y: rowY - 40, width: tableWidth, height: 40, color: rowIndex % 2 ? rgb(0.97, 0.98, 0.97) : rgb(1, 1, 1), borderColor: border, borderWidth: 0.5 });
-    drawText(page, member.name, tableX + 6, rowY - 17, 8, fonts.bold, { maxWidth: 176 });
+    const nameLines = wrap(member.name, fonts.bold, 8, 176).slice(0, 2);
+    nameLines.forEach((line, lineIndex) =>
+      drawText(page, line, tableX + 6, rowY - 14 - lineIndex * 9, 8, fonts.bold),
+    );
     drawText(page, member.carnet, tableX + 6, rowY - 30, 7, fonts.regular, { color: muted });
     let scoreX = tableX + columns[0];
     criteria.forEach((_, criterionIndex) => {
@@ -329,11 +334,17 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
 
   // 6. Hoja de integrantes
   page = addAdminPage("INTEGRANTES DEL GRUPO", `${data.course.name} - Grupo ${data.course.groupNumber || "-"}`);
+  const membersTableX = 56;
+  const membersTableY = 704;
+  page.drawRectangle({ x: membersTableX, y: membersTableY - 34, width: 500, height: 34, color: green });
+  drawText(page, "INTEGRANTE", 68, membersTableY - 21, 8, fonts.bold, { color: rgb(1, 1, 1) });
+  drawText(page, "CARNÉ", 410, membersTableY - 21, 8, fonts.bold, { color: rgb(1, 1, 1) });
   data.members.forEach((member, index) => {
-    const rowY = 690 - index * 62;
-    page.drawCircle({ x: 65, y: rowY + 1, size: 4, color: green });
-    drawText(page, member.name, 82, rowY, 11, fonts.bold, { maxWidth: 330 });
-    drawText(page, `CARNÉ: ${member.carnet}`, 82, rowY - 19, 8.5, fonts.regular, { color: muted });
+    const rowTop = membersTableY - 34 - index * 48;
+    page.drawRectangle({ x: membersTableX, y: rowTop - 48, width: 500, height: 48, color: index % 2 ? rgb(0.97, 0.98, 0.97) : rgb(1, 1, 1), borderColor: border, borderWidth: 0.6 });
+    const memberLines = wrap(member.name, fonts.bold, 9.5, 320).slice(0, 2);
+    memberLines.forEach((line, lineIndex) => drawText(page, line, 68, rowTop - 20 - lineIndex * 11, 9.5, fonts.bold));
+    drawText(page, member.carnet, 410, rowTop - 26, 9, fonts.regular, { color: muted, maxWidth: 132 });
   });
 
   // 7. Desarrollo de ejercicios

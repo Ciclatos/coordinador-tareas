@@ -26,7 +26,8 @@ export function PdfPageThumbnails({
         ).toString();
         const response = await fetch(url, { credentials: "same-origin", cache: "no-store" });
         if (!response.ok) throw new Error("No se pudo leer el PDF privado.");
-        const document = await pdfjs.getDocument({ data: await response.arrayBuffer() }).promise;
+        const loadingTask = pdfjs.getDocument({ data: await response.arrayBuffer() });
+        const document = await loadingTask.promise;
         if (document.numPages > 100)
           throw new Error("La vista previa admite hasta 100 páginas por archivo.");
         const rendered: string[] = [];
@@ -42,7 +43,7 @@ export function PdfPageThumbnails({
           rendered.push(canvas.toDataURL("image/jpeg", 0.72));
           page.cleanup();
         }
-        await document.destroy();
+        await loadingTask.destroy();
         if (!cancelled) {
           setThumbnails(rendered);
           setMessage("");

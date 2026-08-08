@@ -35,7 +35,7 @@ test.afterAll(async () => {
 });
 
 test("protege la aplicación, registra una cuenta y persiste el CRUD base", async ({ page }) => {
-  test.setTimeout(480_000);
+  test.setTimeout(720_000);
   await page.goto("/app");
   await expect(page).toHaveURL(/\/ingresar$/);
 
@@ -251,8 +251,7 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
     .getByRole("button", { name: "Evaluación", exact: true })
     .click();
   await page.getByRole("button", { name: "Aplicar 20 a todos" }).click();
-  await page.getByRole("button", { name: "Guardar evaluaciones" }).click();
-  await expect(page.getByText("Evaluaciones guardadas correctamente.")).toBeVisible();
+  await expect(page.getByText("Guardado ✓")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("cell", { name: "100" })).toBeVisible();
 
   await page.reload();

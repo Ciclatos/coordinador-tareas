@@ -146,14 +146,20 @@ export async function reviewSubmission(input: {
     select: { id: true, assignmentId: true, memberId: true },
   });
   if (!submission) throw new Error("Entrega no encontrada.");
-  await prisma.submission.update({
-    where: { id: submission.id },
-    data: {
-      status: parsed.status,
-      reviewComment: parsed.comment || null,
-      approvedAt: parsed.status === "APPROVED" ? new Date() : null,
-    },
-  });
+  await prisma.$transaction([
+    prisma.submission.update({
+      where: { id: submission.id },
+      data: {
+        status: parsed.status,
+        reviewComment: parsed.comment || null,
+        approvedAt: parsed.status === "APPROVED" ? new Date() : null,
+      },
+    }),
+    prisma.assignment.update({
+      where: { id: submission.assignmentId },
+      data: { contentUpdatedAt: new Date() },
+    }),
+  ]);
   await prisma.submissionAuditEvent.create({
     data: {
       assignmentId: submission.assignmentId,

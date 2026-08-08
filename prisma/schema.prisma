@@ -277,7 +277,7 @@ model AssignmentSubmissionPortal {
   allowLateSubmissions Boolean                @default(false)
   allowReplacements    Boolean                @default(true)
   maxReplacements      Int                    @default(2)
-  maxFileSize          Int                    @default(26214400)
+  maxFileSize          Int                    @default(52428800)
   allowedMimeTypes     Json
   instructions         String?
   tokenVersion         Int                    @default(1)

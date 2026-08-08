@@ -21,6 +21,7 @@ import {
   submissionStatusLabel,
   submissionVersionLabel,
 } from "@/lib/submission-presentation";
+import { DEFAULT_PORTAL_FILE_SIZE } from "@/lib/submission-portal";
 
 type Portal = {
   enabled: boolean;
@@ -90,7 +91,7 @@ export default function PortalManager({
     portal?.maxReplacements ?? 2,
   );
   const [maxMb, setMaxMb] = useState(
-    Math.round((portal?.maxFileSize ?? 25 * 1024 * 1024) / 1024 / 1024),
+    Math.round((portal?.maxFileSize ?? DEFAULT_PORTAL_FILE_SIZE) / 1024 / 1024),
   );
   const configuredTypes = Array.isArray(portal?.allowedMimeTypes)
     ? (portal.allowedMimeTypes as string[])

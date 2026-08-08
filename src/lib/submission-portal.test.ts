@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   createPortalCredentials,
+  DEFAULT_PORTAL_FILE_SIZE,
   createReceiptCode,
   decryptPortalToken,
   encryptPortalToken,
@@ -22,6 +23,9 @@ beforeAll(() => {
 });
 
 describe("seguridad del portal público", () => {
+  it("usa 50 MB como tamaño predeterminado para un portal nuevo", () => {
+    expect(DEFAULT_PORTAL_FILE_SIZE).toBe(50 * 1024 * 1024);
+  });
   it("genera tokens criptográficos largos, únicos y validables por hash", () => {
     const first = generatePortalToken();
     const second = generatePortalToken();

@@ -8,6 +8,7 @@ import {
 } from "node:crypto";
 
 export const DEFAULT_PORTAL_MIME_TYPES = ["application/pdf"] as const;
+export const DEFAULT_PORTAL_FILE_SIZE = 50 * 1024 * 1024;
 export const PUBLIC_SESSION_MAX_AGE_SECONDS = 30 * 60;
 export const IDENTIFICATION_ERROR =
   "No fue posible verificar los datos. Revise la información e inténtelo nuevamente.";

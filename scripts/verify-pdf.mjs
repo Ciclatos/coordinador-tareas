@@ -34,14 +34,22 @@ const text = run(python, [
   "from pypdf import PdfReader; import sys; print('\\n'.join((p.extract_text() or '') for p in PdfReader(sys.argv[1]).pages))",
   input,
 ]);
-for (const heading of [
-  "REPORTE DE DESEMPEÑO SEMANAL",
-  "DESEMPEÑO GRUPAL",
-  "EVALUACIÓN DETALLADA",
-  "RESUMEN DE NOTAS",
-  "CARÁTULA OFICIAL",
-  "INTEGRANTES DEL GRUPO",
-]) {
+const headings = [
+  "UNIVERSIDAD MARIANO GÁLVEZ DE GUATEMALA",
+  "DISTRIBUCIÓN DE EJERCICIOS",
+  "REPORTE DE TRABAJO Y DESEMPEÑO",
+  "ASPECTOS EVALUABLES",
+  "NOTA DEL COORDINADOR",
+];
+for (const heading of headings) {
   if (!text.includes(heading)) throw new Error(`Falta el encabezado: ${heading}`);
+}
+const positions = headings.map((heading) => text.indexOf(heading));
+if (positions.some((position, index) => index > 0 && position <= positions[index - 1]))
+  throw new Error("Las secciones administrativas no están en el orden requerido.");
+if ((text.match(/INTEGRANTES DEL GRUPO/g) || []).length !== 1)
+  throw new Error("La lista de integrantes debe aparecer una sola vez en la carátula.");
+for (const expected of ["TEST-2026-014", "100/100", "87/100", "Sección 5.3", "Sección 5.4", "Sección 5.5"]) {
+  if (!text.includes(expected)) throw new Error(`Falta el dato QA: ${expected}`);
 }
 console.log(JSON.stringify({ input, pages, pageSize, rendered: rendered.length }, null, 2));

@@ -31,21 +31,36 @@ const imageFile = new File(
   "imagen-ejercicio.png",
   { type: "image/png" },
 );
-const names = ["Ana", "Diego", "Sofía", "Mateo", "Valeria", "Daniel"];
+const names = [
+  "Ana Lucía Fernández Montenegro",
+  "Diego Alejandro Ramírez Castañeda",
+  "Sofía Isabel de León Hernández",
+  "Mateo Sebastián González Villagrán",
+  "Valeria Fernanda López Maldonado",
+  "Daniel Eduardo Pérez Escobar",
+  "María José Castillo de la Cruz",
+  "José Andrés Martínez Santizo",
+  "Lucía Alejandra Fuentes Cabrera",
+  "Carlos Antonio Morales Orellana",
+  "Gabriela Estefanía Reyes Mendoza",
+  "Fernando Emilio García Alvarado",
+  "Paola Andrea Méndez Castellanos",
+  "Ricardo Javier Herrera Villatoro",
+];
 const members = names.map((name, index) => ({
   id: `m${index + 1}`,
-  name: `${name} Integrante Ficticio`,
+  name,
   shortName: name,
   carnet: `TEST-2026-${String(index + 1).padStart(3, "0")}`,
   historicalLoad: index,
   active: true,
 }));
-const exercises = ["5.3", "5.4", "5.5"].flatMap((section, sectionIndex) =>
-  ["5", "10", "15", "20", "25"].map((label, index) => ({
-    id: `s${sectionIndex}:${label}`,
+const exercises = [["5.3", 24], ["5.4", 27], ["5.5", 31]].flatMap(([section, count], sectionIndex) =>
+  Array.from({ length: Number(count) }, (_, index) => ({
+    id: `s${sectionIndex}:${index + 1}`,
     sectionId: `s${sectionIndex}`,
     section: `Sección ${section}`,
-    label,
+    label: String((index + 1) * 2),
     weight: 1,
     memberId: members[(sectionIndex + index) % members.length].id,
   })),

@@ -53,6 +53,7 @@ export type AssignmentPdfData = {
 };
 
 const letter: [number, number] = [612, 792];
+const letterLandscape: [number, number] = [792, 612];
 const green = rgb(0.35, 0.62, 0.16);
 const dark = rgb(0.08, 0.11, 0.1);
 const muted = rgb(0.38, 0.42, 0.4);
@@ -96,16 +97,18 @@ function wrap(value: string, font: PDFFont, size: number, maxWidth: number) {
 }
 
 function header(page: PDFPage, title: string, subtitle: string, fonts: Fonts) {
-  page.drawRectangle({ x: 0, y: 744, width: 612, height: 48, color: dark });
-  page.drawRectangle({ x: 0, y: 744, width: 10, height: 48, color: green });
-  drawText(page, title, 48, 768, 15, fonts.bold, { color: rgb(1, 1, 1) });
-  drawText(page, subtitle, 48, 753, 8, fonts.regular, { color: rgb(0.84, 0.88, 0.85) });
+  const { width, height } = page.getSize();
+  page.drawRectangle({ x: 0, y: height - 48, width, height: 48, color: dark });
+  page.drawRectangle({ x: 0, y: height - 48, width: 10, height: 48, color: green });
+  drawText(page, title, 48, height - 24, 15, fonts.bold, { color: rgb(1, 1, 1) });
+  drawText(page, subtitle, 48, height - 39, 8, fonts.regular, { color: rgb(0.84, 0.88, 0.85) });
 }
 
 function footer(page: PDFPage, pageNumber: number, systemName: string, fonts: Fonts) {
-  page.drawLine({ start: { x: 48, y: 38 }, end: { x: 564, y: 38 }, thickness: 0.6, color: border });
+  const { width } = page.getSize();
+  page.drawLine({ start: { x: 48, y: 38 }, end: { x: width - 48, y: 38 }, thickness: 0.6, color: border });
   drawText(page, systemName, 48, 23, 7.5, fonts.regular, { color: muted });
-  drawText(page, String(pageNumber), 548, 23, 8, fonts.bold, { color: muted });
+  drawText(page, String(pageNumber), width - 64, 23, 8, fonts.bold, { color: muted });
 }
 
 function formatDate(value: string, withTime = false) {
@@ -176,120 +179,26 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
   };
   const copiedPageIndexes = new Set<number>();
   let pageNumber = 0;
-  const addAdminPage = (title: string, subtitle: string) => {
-    const page = doc.addPage(letter);
+  const addAdminPage = (
+    title: string,
+    subtitle: string,
+    size: [number, number] = letter,
+  ) => {
+    const page = doc.addPage(size);
     pageNumber += 1;
     header(page, title, subtitle, fonts);
     footer(page, pageNumber, data.systemName, fonts);
     return page;
   };
 
-  // 1. Portada del reporte
-  let page = addAdminPage("REPORTE DE DESEMPEÑO SEMANAL", `Semana ${data.assignment.weekNumber}`);
   const university = data.course.university || "Universidad Mariano Gálvez de Guatemala";
-  drawText(page, university.toUpperCase(), 56, 690, 17, fonts.bold, { maxWidth: 500 });
-  drawText(page, (data.course.faculty || "Facultad").toUpperCase(), 56, 663, 10, fonts.bold, { color: green });
-  const details = [
-    ["Curso", data.course.name],
-    ["Código", data.course.code || "No especificado"],
-    ["Docente", data.course.teacher || "No especificado"],
-    ["Carrera", data.course.degree || "No especificada"],
-    ["Sede y jornada", [data.course.campus, data.course.shift].filter(Boolean).join(" - ") || "No especificadas"],
-    ["Semestre y sección", [data.course.semester, data.course.section].filter(Boolean).join(" - ") || "No especificados"],
-  ];
-  page.drawRectangle({ x: 44, y: 354, width: 524, height: 282, color: rgb(0.975, 0.985, 0.98), borderColor: border, borderWidth: 0.8 });
-  details.forEach(([label, value], index) => {
-    const y = 610 - index * 43;
-    drawText(page, label.toUpperCase(), 56, y, 7.5, fonts.bold, { color: muted });
-    drawText(page, value, 56, y - 18, 11, fonts.regular, { maxWidth: 500 });
-  });
-  drawText(page, "INTEGRANTES", 56, 330, 8, fonts.bold, { color: muted });
-  data.members.forEach((member, index) => {
-    const column = index >= Math.ceil(data.members.length / 2) ? 1 : 0;
-    const row = column ? index - Math.ceil(data.members.length / 2) : index;
-    drawText(page, member.name, 56 + column * 260, 304 - row * 26, 9, fonts.regular, { maxWidth: 210 });
-    drawText(page, member.carnet, 56 + column * 260, 293 - row * 26, 7.5, fonts.bold, { color: muted });
-  });
-  drawText(page, `${formatDate(data.assignment.weekStart)} al ${formatDate(data.assignment.weekEnd)}`, 56, 74, 10, fonts.bold, { color: green });
 
-  // 2. Desempeño grupal
-  page = addAdminPage("DESEMPEÑO GRUPAL", `Tarea ${data.assignment.number} - ${data.assignment.title}`);
-  drawText(page, `Semana #${data.assignment.weekNumber} de trabajo`, 56, 706, 11, fonts.bold);
-  let y = 674;
-  for (const line of wrap(data.reportBody, fonts.regular, 10, 500)) {
-    drawText(page, line, 56, y, 10, fonts.regular);
-    y -= 16;
-  }
-  y -= 18;
-  drawText(page, "SECCIONES Y EJERCICIOS", 56, y, 8, fonts.bold, { color: muted });
-  y -= 23;
-  const sections = [...new Set(data.exercises.map((exercise) => exercise.section))];
-  for (const section of sections) {
-    const labels = data.exercises.filter((exercise) => exercise.section === section).map((exercise) => exercise.label);
-    drawText(page, `${section}: ${labels.join(", ")}`, 56, y, 9, fonts.regular, { maxWidth: 500 });
-    y -= 18;
-  }
-
-  // 3. Tabla detallada
-  page = addAdminPage("EVALUACIÓN DETALLADA", "Criterios configurados y puntuaciones por integrante");
-  const criteria = data.evaluations[0]?.scores ?? [
-    { name: "Puntualidad", maxScore: 20, score: 0 },
-    { name: "Presentación", maxScore: 20, score: 0 },
-    { name: "Trabajo en equipo", maxScore: 20, score: 0 },
-    { name: "Comunicación", maxScore: 20, score: 0 },
-    { name: "Ejercicios completos", maxScore: 20, score: 0 },
-  ];
-  const columns = [190, ...criteria.map(() => 62), 48];
-  const tableX = 32;
-  const tableWidth = columns.reduce((sum, width) => sum + width, 0);
-  let tableY = 708;
-  page.drawRectangle({ x: tableX, y: tableY - 38, width: tableWidth, height: 38, color: green });
-  let x = tableX;
-  drawText(page, "Integrante", x + 6, tableY - 22, 8, fonts.bold, { color: rgb(1, 1, 1) });
-  x += columns[0];
-  criteria.forEach((criterion, index) => {
-    const short = criterion.name.length > 12 ? `${criterion.name.slice(0, 11)}.` : criterion.name;
-    drawText(page, short, x + 3, tableY - 16, 6.5, fonts.bold, { color: rgb(1, 1, 1), maxWidth: columns[index + 1] - 6 });
-    drawText(page, `/${criterion.maxScore}`, x + 3, tableY - 28, 6.5, fonts.regular, { color: rgb(1, 1, 1) });
-    x += columns[index + 1];
-  });
-  drawText(page, "Total", x + 5, tableY - 22, 7, fonts.bold, { color: rgb(1, 1, 1) });
-  tableY -= 38;
-  data.members.forEach((member, rowIndex) => {
-    const evaluation = data.evaluations.find((item) => item.memberId === member.id);
-    const rowY = tableY - rowIndex * 40;
-    page.drawRectangle({ x: tableX, y: rowY - 40, width: tableWidth, height: 40, color: rowIndex % 2 ? rgb(0.97, 0.98, 0.97) : rgb(1, 1, 1), borderColor: border, borderWidth: 0.5 });
-    const nameLines = wrap(member.name, fonts.bold, 8, 176).slice(0, 2);
-    nameLines.forEach((line, lineIndex) =>
-      drawText(page, line, tableX + 6, rowY - 14 - lineIndex * 9, 8, fonts.bold),
-    );
-    drawText(page, member.carnet, tableX + 6, rowY - 30, 7, fonts.regular, { color: muted });
-    let scoreX = tableX + columns[0];
-    criteria.forEach((_, criterionIndex) => {
-      drawText(page, String(evaluation?.scores[criterionIndex]?.score ?? "-"), scoreX + 22, rowY - 24, 9, fonts.regular);
-      scoreX += columns[criterionIndex + 1];
-    });
-    drawText(page, String(evaluation?.total ?? "-"), scoreX + 10, rowY - 24, 10, fonts.bold, { color: green });
-  });
-
-  // 4. Tabla resumen
-  page = addAdminPage("RESUMEN DE NOTAS", "Puntuación total por integrante");
-  tableY = 700;
-  page.drawRectangle({ x: 56, y: tableY - 32, width: 500, height: 32, color: green });
-  ["Integrante", "Carné", "Nota / 100"].forEach((label, index) =>
-    drawText(page, label, [64, 330, 482][index], tableY - 20, 8, fonts.bold, { color: rgb(1, 1, 1) }),
-  );
-  data.members.forEach((member, index) => {
-    const rowY = tableY - 32 - index * 42;
-    const evaluation = data.evaluations.find((item) => item.memberId === member.id);
-    page.drawRectangle({ x: 56, y: rowY - 42, width: 500, height: 42, color: index % 2 ? rgb(0.97, 0.98, 0.97) : rgb(1, 1, 1), borderColor: border, borderWidth: 0.5 });
-    drawText(page, member.name, 64, rowY - 25, 9, fonts.regular, { maxWidth: 250 });
-    drawText(page, member.carnet, 330, rowY - 25, 9, fonts.regular);
-    drawText(page, String(evaluation?.total ?? "-"), 500, rowY - 25, 11, fonts.bold, { color: green });
-  });
-
-  // 5. Carátula oficial recreada
-  page = addAdminPage("CARÁTULA OFICIAL", `Grupo ${data.course.groupNumber || "-"}`);
+  // 1. Carátula institucional completa
+  let page = doc.addPage(letter);
+  pageNumber += 1;
+  page.drawRectangle({ x: 0, y: 0, width: 612, height: 792, color: rgb(0.985, 0.99, 0.986) });
+  page.drawRectangle({ x: 0, y: 756, width: 612, height: 36, color: dark });
+  page.drawRectangle({ x: 0, y: 756, width: 12, height: 36, color: green });
   try {
     let logoBytes = data.logoBytes;
     if (!logoBytes) {
@@ -298,56 +207,216 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
     }
     if (logoBytes) {
       const logo = await doc.embedPng(logoBytes);
-      const scale = Math.min(120 / logo.width, 100 / logo.height);
-      page.drawImage(logo, { x: 246, y: 548, width: logo.width * scale, height: logo.height * scale });
+      const scale = Math.min(88 / logo.width, 76 / logo.height);
+      page.drawImage(logo, { x: 262, y: 656, width: logo.width * scale, height: logo.height * scale });
     }
   } catch {
     // El texto institucional sigue identificando la carátula si el activo no carga.
   }
-  drawText(page, "MATEMÁTICA", 198, 690, 25, fonts.bold, { color: green });
-  drawText(page, university.toUpperCase(), 120, 520, 15, fonts.bold, { maxWidth: 390 });
-  const coverLines = [
-    `Curso: ${data.course.name}`,
-    `Código: ${data.course.code || "-"}`,
-    `Docente: ${data.course.teacher || "-"}`,
-    `Semestre: ${data.course.semester || "-"}    Sección: ${data.course.section || "-"}`,
-    `TAREA No. ${data.assignment.number}`,
-    `Tema: ${data.assignment.topic || data.assignment.title}`,
-    `Fecha de entrega: ${formatDate(data.assignment.dueAt, true)}`,
+  drawText(page, university.toUpperCase(), 56, 634, 14, fonts.bold, { maxWidth: 500 });
+  drawText(page, (data.course.faculty || "Facultad").toUpperCase(), 56, 614, 9, fonts.bold, { color: green, maxWidth: 500 });
+  drawText(page, `TAREA ${data.assignment.number} · SEMANA ${data.assignment.weekNumber}`, 56, 574, 11, fonts.bold, { color: green });
+  const titleLines = wrap(data.assignment.title, fonts.bold, 24, 500).slice(0, 2);
+  titleLines.forEach((line, index) => drawText(page, line, 56, 540 - index * 28, 24, fonts.bold));
+  drawText(page, data.assignment.topic || "Reporte de trabajo y desempeño", 56, 482, 11, fonts.regular, { color: muted, maxWidth: 500 });
+  const coverDetails = [
+    ["Sede", data.course.campus || "No especificada"],
+    ["Jornada", data.course.shift || "No especificada"],
+    ["Carrera", data.course.degree || "No especificada"],
+    ["Curso", data.course.name],
+    ["Código", data.course.code || "No especificado"],
+    ["Docente", data.course.teacher || "No especificado"],
+    ["Fecha", formatDate(data.assignment.dueAt, true)],
+    ["Semestre", data.course.semester || data.course.cycle || "No especificado"],
+    ["Sección", data.course.section || "No especificada"],
   ];
-  coverLines.forEach((line, index) => drawText(page, line, 104, 480 - index * 30, index === 4 ? 14 : 10, index === 4 ? fonts.bold : fonts.regular, { maxWidth: 410 }));
-  const grading = [
-    ["Carátula", "5"], ["Fecha de entrega", "5"], ["Presentación", "10"],
-    ["Ejercicios completos", "40"], ["Ejercicios al azar (3)", "40"], ["Total", "100"],
-  ];
-  drawText(page, "CRITERIO", 150, 270, 7, fonts.bold, { color: muted });
-  drawText(page, "MÁX.", 390, 270, 7, fonts.bold, { color: muted });
-  drawText(page, "NOTA", 438, 270, 7, fonts.bold, { color: muted });
-  grading.forEach(([label, max], index) => {
-    const rowY = 240 - index * 25;
-    page.drawRectangle({ x: 142, y: rowY, width: 328, height: 25, borderColor: border, borderWidth: 0.6 });
-    page.drawLine({ start: { x: 430, y: rowY }, end: { x: 430, y: rowY + 25 }, thickness: 0.6, color: border });
-    drawText(page, label, 150, rowY + 8, 8, index === 5 ? fonts.bold : fonts.regular);
-    drawText(page, max, 390, rowY + 8, 8, fonts.bold);
-    drawText(page, "", 445, rowY + 8, 8, fonts.regular);
+  page.drawRectangle({ x: 48, y: 278, width: 516, height: 176, color: rgb(1, 1, 1), borderColor: border, borderWidth: 0.8 });
+  coverDetails.forEach(([label, value], index) => {
+    const column = index % 2;
+    const row = Math.floor(index / 2);
+    const x = 60 + column * 252;
+    const y = 430 - row * 34;
+    drawText(page, label.toUpperCase(), x, y, 6.8, fonts.bold, { color: muted });
+    drawText(page, value, x, y - 14, 9, fonts.regular, { maxWidth: 232 });
   });
-
-  // 6. Hoja de integrantes
-  page = addAdminPage("INTEGRANTES DEL GRUPO", `${data.course.name} - Grupo ${data.course.groupNumber || "-"}`);
-  const membersTableX = 56;
-  const membersTableY = 704;
-  page.drawRectangle({ x: membersTableX, y: membersTableY - 34, width: 500, height: 34, color: green });
-  drawText(page, "INTEGRANTE", 68, membersTableY - 21, 8, fonts.bold, { color: rgb(1, 1, 1) });
-  drawText(page, "CARNÉ", 410, membersTableY - 21, 8, fonts.bold, { color: rgb(1, 1, 1) });
+  drawText(page, "INTEGRANTES DEL GRUPO", 56, 250, 8, fonts.bold, { color: muted });
+  const memberColumns = 2;
+  const memberColumnWidth = 500 / memberColumns;
   data.members.forEach((member, index) => {
-    const rowTop = membersTableY - 34 - index * 48;
-    page.drawRectangle({ x: membersTableX, y: rowTop - 48, width: 500, height: 48, color: index % 2 ? rgb(0.97, 0.98, 0.97) : rgb(1, 1, 1), borderColor: border, borderWidth: 0.6 });
-    const memberLines = wrap(member.name, fonts.bold, 9.5, 320).slice(0, 2);
-    memberLines.forEach((line, lineIndex) => drawText(page, line, 68, rowTop - 20 - lineIndex * 11, 9.5, fonts.bold));
-    drawText(page, member.carnet, 410, rowTop - 26, 9, fonts.regular, { color: muted, maxWidth: 132 });
+    const column = index % memberColumns;
+    const row = Math.floor(index / memberColumns);
+    const x = 56 + column * memberColumnWidth;
+    const y = 224 - row * 24;
+    drawText(page, member.name, x, y, 7.5, fonts.bold, { maxWidth: memberColumnWidth - 12 });
+    drawText(page, member.carnet, x, y - 10, 6.3, fonts.regular, { color: muted, maxWidth: memberColumnWidth - 12 });
   });
+  drawText(page, `Grupo ${data.course.groupNumber || "-"} · ${formatDate(data.assignment.weekStart)} al ${formatDate(data.assignment.weekEnd)}`, 56, 62, 9, fonts.bold, { color: green });
+  footer(page, pageNumber, data.systemName, fonts);
 
-  // 7. Desarrollo de ejercicios
+  // 2. Distribución de ejercicios, con bloques de secciones legibles.
+  const sections = [...new Set(data.exercises.map((exercise) => exercise.section))];
+  const sectionGroups = Array.from(
+    { length: Math.max(1, Math.ceil(sections.length / 5)) },
+    (_, index) => sections.slice(index * 5, index * 5 + 5),
+  );
+  for (const [groupIndex, sectionGroup] of sectionGroups.entries()) {
+    const distributionRows = data.members.map((member) => {
+      const bySection = sectionGroup.map((section) =>
+        data.allocations
+          .filter((allocation) => allocation.memberId === member.id)
+          .map((allocation) => data.exercises.find((exercise) => exercise.id === allocation.exerciseId))
+          .filter((exercise): exercise is Exercise => exercise?.section === section)
+          .map((exercise) => exercise.label),
+      );
+      return {
+        member,
+        bySection,
+        total: data.allocations.filter((allocation) => allocation.memberId === member.id).length,
+      };
+    });
+    let rowIndex = 0;
+    while (rowIndex < distributionRows.length || (!distributionRows.length && rowIndex === 0)) {
+      page = addAdminPage(
+        "DISTRIBUCIÓN DE EJERCICIOS",
+        `${data.course.name} · Tarea ${data.assignment.number}${sectionGroups.length > 1 ? ` · Bloque ${groupIndex + 1} de ${sectionGroups.length}` : ""}`,
+        letterLandscape,
+      );
+      const tableX = 34;
+      const nameWidth = 172;
+      const totalWidth = 48;
+      const sectionWidth = (724 - nameWidth - totalWidth) / Math.max(1, sectionGroup.length);
+      let tableY = 530;
+      page.drawRectangle({ x: tableX, y: tableY - 34, width: 724, height: 34, color: green });
+      drawText(page, "INTEGRANTE", tableX + 7, tableY - 21, 7.5, fonts.bold, { color: rgb(1, 1, 1) });
+      sectionGroup.forEach((section, index) =>
+        drawText(page, section, tableX + nameWidth + index * sectionWidth + 5, tableY - 21, 7.5, fonts.bold, { color: rgb(1, 1, 1), maxWidth: sectionWidth - 10 }),
+      );
+      drawText(page, "TOTAL", tableX + 724 - totalWidth + 6, tableY - 21, 7.2, fonts.bold, { color: rgb(1, 1, 1) });
+      tableY -= 34;
+      let drewRow = false;
+      while (rowIndex < distributionRows.length) {
+        const row = distributionRows[rowIndex];
+        const nameLines = wrap(row.member.name, fonts.bold, 7.8, nameWidth - 14);
+        const sectionLines = row.bySection.map((labels) =>
+          wrap(labels.join(", ") || "-", fonts.regular, 7.5, sectionWidth - 12),
+        );
+        const lineCount = Math.max(2, nameLines.length + 1, ...sectionLines.map((lines) => lines.length));
+        const rowHeight = Math.max(38, lineCount * 10 + 12);
+        if (tableY - rowHeight < 54 && drewRow) break;
+        page.drawRectangle({ x: tableX, y: tableY - rowHeight, width: 724, height: rowHeight, color: rowIndex % 2 ? rgb(0.965, 0.98, 0.97) : rgb(1, 1, 1), borderColor: border, borderWidth: 0.5 });
+        nameLines.forEach((line, index) => drawText(page, line, tableX + 7, tableY - 14 - index * 10, 7.8, fonts.bold));
+        drawText(page, row.member.carnet, tableX + 7, tableY - rowHeight + 8, 6.5, fonts.regular, { color: muted });
+        sectionLines.forEach((lines, sectionIndex) =>
+          lines.forEach((line, lineIndex) => drawText(page, line, tableX + nameWidth + sectionIndex * sectionWidth + 6, tableY - 14 - lineIndex * 10, 7.5, fonts.regular)),
+        );
+        drawText(page, String(row.total), tableX + 724 - totalWidth + 16, tableY - 20, 9, fonts.bold, { color: green });
+        tableY -= rowHeight;
+        rowIndex += 1;
+        drewRow = true;
+      }
+      if (!distributionRows.length) rowIndex += 1;
+    }
+  }
+
+  // 3. Reporte de trabajo individual / desempeño.
+  const reportLines = wrap(data.reportBody || "Sin reporte guardado.", fonts.regular, 10, 500);
+  let reportIndex = 0;
+  while (reportIndex < reportLines.length || reportIndex === 0) {
+    page = addAdminPage("REPORTE DE TRABAJO Y DESEMPEÑO", `Semana ${data.assignment.weekNumber} · Tarea ${data.assignment.number}`);
+    drawText(page, data.assignment.title, 56, 704, 14, fonts.bold, { maxWidth: 500 });
+    drawText(page, data.assignment.topic || "Desempeño grupal", 56, 682, 9, fonts.regular, { color: green, maxWidth: 500 });
+    let reportY = 646;
+    while (reportIndex < reportLines.length && reportY >= 66) {
+      drawText(page, reportLines[reportIndex], 56, reportY, 10, fonts.regular);
+      reportY -= 16;
+      reportIndex += 1;
+    }
+    if (!reportLines.length) reportIndex += 1;
+  }
+
+  // 4. Aspectos evaluables numéricos.
+  const criteria = data.evaluations[0]?.scores ?? [];
+  const criterionGroups = Array.from(
+    { length: Math.max(1, Math.ceil(criteria.length / 4)) },
+    (_, index) => criteria.slice(index * 4, index * 4 + 4),
+  );
+  for (const [criteriaIndex, criterionGroup] of criterionGroups.entries()) {
+    const evaluationPageCount = Math.max(1, Math.ceil(data.members.length / 12));
+    const evaluationPageSize = Math.max(
+      1,
+      Math.ceil(data.members.length / evaluationPageCount),
+    );
+    const memberGroups = Array.from(
+      { length: evaluationPageCount },
+      (_, index) =>
+        data.members.slice(
+          index * evaluationPageSize,
+          index * evaluationPageSize + evaluationPageSize,
+        ),
+    );
+    for (const [memberGroupIndex, memberGroup] of memberGroups.entries()) {
+      page = addAdminPage("ASPECTOS EVALUABLES", `Puntuaciones numéricas${criterionGroups.length > 1 ? ` · Bloque ${criteriaIndex + 1} de ${criterionGroups.length}` : ""}${memberGroups.length > 1 ? ` · Integrantes ${memberGroupIndex + 1} de ${memberGroups.length}` : ""}`);
+      const tableX = 44;
+      const nameWidth = 190;
+      const totalWidth = 54;
+      const scoreWidth = (524 - nameWidth - totalWidth) / Math.max(1, criterionGroup.length);
+      let tableY = 706;
+      page.drawRectangle({ x: tableX, y: tableY - 42, width: 524, height: 42, color: green });
+      drawText(page, "INTEGRANTE", tableX + 7, tableY - 25, 7.5, fonts.bold, { color: rgb(1, 1, 1) });
+      criterionGroup.forEach((criterion, index) => {
+        const lines = wrap(criterion.name, fonts.bold, 6.5, scoreWidth - 8).slice(0, 2);
+        lines.forEach((line, lineIndex) => drawText(page, line, tableX + nameWidth + index * scoreWidth + 4, tableY - 14 - lineIndex * 8, 6.5, fonts.bold, { color: rgb(1, 1, 1) }));
+        drawText(page, `/${criterion.maxScore}`, tableX + nameWidth + index * scoreWidth + 4, tableY - 36, 6.2, fonts.regular, { color: rgb(1, 1, 1) });
+      });
+      drawText(page, "TOTAL", tableX + 524 - totalWidth + 6, tableY - 25, 7, fonts.bold, { color: rgb(1, 1, 1) });
+      tableY -= 42;
+      memberGroup.forEach((member, index) => {
+        const evaluation = data.evaluations.find((item) => item.memberId === member.id);
+        const rowHeight = 44;
+        page.drawRectangle({ x: tableX, y: tableY - rowHeight, width: 524, height: rowHeight, color: index % 2 ? rgb(0.965, 0.98, 0.97) : rgb(1, 1, 1), borderColor: border, borderWidth: 0.5 });
+        wrap(member.name, fonts.bold, 7.8, nameWidth - 14).slice(0, 2).forEach((line, lineIndex) => drawText(page, line, tableX + 7, tableY - 14 - lineIndex * 9, 7.8, fonts.bold));
+        criterionGroup.forEach((criterion, criterionIndex) => {
+          const score = evaluation?.scores.find((item) => item.name === criterion.name)?.score;
+          drawText(page, score === undefined ? "-" : String(score), tableX + nameWidth + criterionIndex * scoreWidth + scoreWidth / 2 - 5, tableY - 25, 9, fonts.regular);
+        });
+        drawText(page, evaluation ? `${evaluation.total}` : "-", tableX + 524 - totalWidth + 12, tableY - 25, 9, fonts.bold, { color: green });
+        tableY -= rowHeight;
+      });
+    }
+  }
+
+  // 5. Nota del coordinador.
+  const summaryPageCount = Math.max(1, Math.ceil(data.members.length / 12));
+  const summaryPageSize = Math.max(
+    1,
+    Math.ceil(data.members.length / summaryPageCount),
+  );
+  const summaryMemberGroups = Array.from(
+    { length: summaryPageCount },
+    (_, index) =>
+      data.members.slice(
+        index * summaryPageSize,
+        index * summaryPageSize + summaryPageSize,
+      ),
+  );
+  for (const [groupIndex, memberGroup] of summaryMemberGroups.entries()) {
+    page = addAdminPage("NOTA DEL COORDINADOR", `Punteo final guardado para la tarea seleccionada${summaryMemberGroups.length > 1 ? ` · Página ${groupIndex + 1} de ${summaryMemberGroups.length}` : ""}`);
+    let summaryY = 706;
+    page.drawRectangle({ x: 50, y: summaryY - 34, width: 512, height: 34, color: green });
+    [["PARTICIPANTE", 58], ["CARNÉ", 376], ["PUNTEO", 492]].forEach(([label, x]) => drawText(page, String(label), Number(x), summaryY - 21, 7.5, fonts.bold, { color: rgb(1, 1, 1) }));
+    summaryY -= 34;
+    memberGroup.forEach((member, index) => {
+      const evaluation = data.evaluations.find((item) => item.memberId === member.id);
+      const rowHeight = 44;
+      page.drawRectangle({ x: 50, y: summaryY - rowHeight, width: 512, height: rowHeight, color: index % 2 ? rgb(0.965, 0.98, 0.97) : rgb(1, 1, 1), borderColor: border, borderWidth: 0.5 });
+      wrap(member.name, fonts.bold, 8.5, 304).slice(0, 2).forEach((line, lineIndex) => drawText(page, line, 58, summaryY - 16 - lineIndex * 10, 8.5, fonts.bold));
+      drawText(page, member.carnet, 376, summaryY - 26, 8.5, fonts.regular, { maxWidth: 106 });
+      drawText(page, evaluation ? `${evaluation.total}/100` : "-/100", 496, summaryY - 26, 10, fonts.bold, { color: green });
+      summaryY -= rowHeight;
+    });
+  }
+
+  // 6. Entregas de los integrantes
   const sources: Array<File | StoredPdfSource> = [...(data.storedFiles ?? []), ...data.files];
   for (const source of sources) {
     const file = await sourceBytes(source);

@@ -526,12 +526,11 @@ export default function AppShell({
           pathname: stored.pathname,
           contentSnapshotAt: freshContent.contentUpdatedAt,
           items: [
-            "REPORT_COVER",
-            "GROUP_PERFORMANCE",
-            "DETAILED_EVALUATION",
-            "GRADE_SUMMARY",
-            "OFFICIAL_COVER",
-            "MEMBERS",
+            "COVER",
+            "DISTRIBUTION",
+            "WORK_REPORT",
+            "EVALUATION",
+            "COORDINATOR_GRADES",
           ]
             .map((kind) => ({ kind }))
             .concat(

@@ -56,11 +56,34 @@ function data(files: File[] = []): AssignmentPdfData {
 }
 
 describe("constructor PDF", () => {
-  it("genera las seis páginas administrativas en el orden obligatorio", async () => {
+  it("genera las cinco secciones administrativas sin duplicar integrantes", async () => {
     const bytes = await createAssignmentPdf(data());
     const pdf = await PDFDocument.load(bytes);
     expect(pdf.getPageCount()).toBe(6);
     expect(pdf.getTitle()).toBe("Matemática de prueba - Tarea 5");
+  });
+
+  it("divide tablas extensas y conserva una orientación legible", async () => {
+    const input = data();
+    input.members = Array.from({ length: 14 }, (_, index) => ({
+      ...input.members[0],
+      id: `m${index + 1}`,
+      name: `Integrante Ficticio de Nombre Extenso Número ${index + 1}`,
+      carnet: `TEST-${index + 1}`,
+    }));
+    input.allocations = input.members.map((member) => ({
+      exerciseId: "e1",
+      memberId: member.id,
+    }));
+    input.evaluations = input.members.map((member, index) => ({
+      memberId: member.id,
+      total: 100 - index,
+      scores: data().evaluations[0].scores,
+    }));
+    const bytes = await createAssignmentPdf(input);
+    const pdf = await PDFDocument.load(bytes);
+    expect(pdf.getPageCount()).toBeGreaterThan(5);
+    expect(pdf.getPages().some((page) => page.getWidth() > page.getHeight())).toBe(true);
   });
 
   it("incorpora todas las páginas de una entrega PDF", async () => {

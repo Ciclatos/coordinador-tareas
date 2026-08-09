@@ -3494,13 +3494,15 @@ function PdfBuilder({
       ]),
     ),
   );
+  const adminBlocks = [
+    "Carátula institucional e integrantes",
+    "Distribución de ejercicios",
+    "Reporte de trabajo y desempeño",
+    "Aspectos evaluables",
+    "Nota del coordinador",
+  ];
   const blocks = [
-    "Portada del reporte",
-    "Desempeño grupal",
-    "Evaluación detallada",
-    "Resumen de notas",
-    "Carátula oficial",
-    "Integrantes del grupo",
+    ...adminBlocks,
     ...storedFiles.map((file) => file.name),
   ];
   useEffect(() => {
@@ -3675,24 +3677,28 @@ function PdfBuilder({
             <div
               className="block"
               key={`${b}-${i}`}
-              draggable={i >= 6}
+              draggable={i >= adminBlocks.length}
               onDragStart={(event) => {
-                if (i >= 6) {
+                if (i >= adminBlocks.length) {
                   event.dataTransfer.effectAllowed = "move";
                   event.dataTransfer.setData(
                     "text/plain",
-                    storedFiles[i - 6].id,
+                    storedFiles[i - adminBlocks.length].id,
                   );
                 }
               }}
               onDragOver={(event) => {
-                if (i >= 6) event.preventDefault();
+                if (i >= adminBlocks.length) event.preventDefault();
               }}
               onDrop={(event) => {
-                if (i >= 6) {
+                if (i >= adminBlocks.length) {
                   event.preventDefault();
                   const sourceId = event.dataTransfer.getData("text/plain");
-                  if (sourceId) onMoveFileTo(sourceId, storedFiles[i - 6].id);
+                  if (sourceId)
+                    onMoveFileTo(
+                      sourceId,
+                      storedFiles[i - adminBlocks.length].id,
+                    );
                 }
               }}
             >
@@ -3700,20 +3706,20 @@ function PdfBuilder({
               <span>
                 <strong>{b}</strong>
                 <small>
-                  {i < 6
-                    ? "Página administrativa generada"
+                  {i < adminBlocks.length
+                    ? "Sección administrativa generada"
                     : "Entrega recibida"}
                 </small>
               </span>
-              {i >= 6 && (
+              {i >= adminBlocks.length && (
                 <div className="file-controls">
                   <label>
                     Rotación
                     <select
                       aria-label={`Rotación de ${b}`}
-                      value={storedFiles[i - 6].rotation ?? 0}
+                      value={storedFiles[i - adminBlocks.length].rotation ?? 0}
                       onChange={(event) =>
-                        onConfigureFile(storedFiles[i - 6].id, {
+                        onConfigureFile(storedFiles[i - adminBlocks.length].id, {
                           rotation: Number(event.target.value) as
                             | 0
                             | 90
@@ -3728,25 +3734,25 @@ function PdfBuilder({
                       <option value="270">270°</option>
                     </select>
                   </label>
-                  {storedFiles[i - 6].mimeType === "application/pdf" && (
+                  {storedFiles[i - adminBlocks.length].mimeType === "application/pdf" && (
                     <>
                       <label>
                         Páginas
                         <input
                           aria-label={`Páginas de ${b}`}
-                          value={pageInputs[storedFiles[i - 6].id] ?? ""}
+                          value={pageInputs[storedFiles[i - adminBlocks.length].id] ?? ""}
                           placeholder="Todas"
                           onChange={(event) => {
                             const value = event.target.value;
                             setPageInputs((current) => ({
                               ...current,
-                              [storedFiles[i - 6].id]: value,
+                              [storedFiles[i - adminBlocks.length].id]: value,
                             }));
                             try {
-                              onConfigureFile(storedFiles[i - 6].id, {
+                              onConfigureFile(storedFiles[i - adminBlocks.length].id, {
                                 selectedPages: parsePageSelection(
                                   value,
-                                  storedFiles[i - 6].pageCount ?? undefined,
+                                  storedFiles[i - adminBlocks.length].pageCount ?? undefined,
                                 ),
                               });
                               setConfigurationMessage("");
@@ -3761,32 +3767,32 @@ function PdfBuilder({
                         />
                       </label>
                       <PdfPageThumbnails
-                        url={storedFiles[i - 6].url}
+                        url={storedFiles[i - adminBlocks.length].url}
                         name={b}
-                        selectedPages={storedFiles[i - 6].selectedPages}
+                        selectedPages={storedFiles[i - adminBlocks.length].selectedPages}
                         onChange={(pages) => {
                           setPageInputs((current) => ({
                             ...current,
-                            [storedFiles[i - 6].id]: formatPageSelection(pages),
+                              [storedFiles[i - adminBlocks.length].id]: formatPageSelection(pages),
                           }));
-                          onConfigureFile(storedFiles[i - 6].id, {
+                          onConfigureFile(storedFiles[i - adminBlocks.length].id, {
                             selectedPages: pages,
                           });
                         }}
                       />
                     </>
                   )}
-                  {storedFiles[i - 6].mimeType.startsWith("image/") && (
+                  {storedFiles[i - adminBlocks.length].mimeType.startsWith("image/") && (
                     <label>
                       Recorte por borde (%)
                       <input
                         type="number"
                         min="0"
                         max="40"
-                        value={storedFiles[i - 6].cropPercent ?? 0}
+                        value={storedFiles[i - adminBlocks.length].cropPercent ?? 0}
                         aria-label={`Recorte de ${b}`}
                         onChange={(event) =>
-                          onConfigureFile(storedFiles[i - 6].id, {
+                          onConfigureFile(storedFiles[i - adminBlocks.length].id, {
                             cropPercent: Math.min(
                               40,
                               Math.max(0, Number(event.target.value)),
@@ -3800,14 +3806,18 @@ function PdfBuilder({
                     <button
                       aria-label={`Subir ${b}`}
                       disabled={i === 6}
-                      onClick={() => onMoveFile(storedFiles[i - 6].id, -1)}
+                      onClick={() =>
+                        onMoveFile(storedFiles[i - adminBlocks.length].id, -1)
+                      }
                     >
                       ↑
                     </button>
                     <button
                       aria-label={`Bajar ${b}`}
                       disabled={i === blocks.length - 1}
-                      onClick={() => onMoveFile(storedFiles[i - 6].id, 1)}
+                      onClick={() =>
+                        onMoveFile(storedFiles[i - adminBlocks.length].id, 1)
+                      }
                     >
                       ↓
                     </button>

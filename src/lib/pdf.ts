@@ -206,8 +206,15 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
     }
     if (logoBytes) {
       const logo = await doc.embedPng(logoBytes);
-      const scale = Math.min(88 / logo.width, 76 / logo.height);
-      page.drawImage(logo, { x: 262, y: 656, width: logo.width * scale, height: logo.height * scale });
+      const scale = Math.min(132 / logo.width, 54 / logo.height);
+      const logoWidth = logo.width * scale;
+      const logoHeight = logo.height * scale;
+      page.drawImage(logo, {
+        x: (letter[0] - logoWidth) / 2,
+        y: 658,
+        width: logoWidth,
+        height: logoHeight,
+      });
     }
   } catch {
     // El texto institucional sigue identificando la carátula si el activo no carga.

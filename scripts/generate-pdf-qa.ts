@@ -51,7 +51,10 @@ const members = names.map((name, index) => ({
   id: `m${index + 1}`,
   name,
   shortName: name,
-  carnet: `TEST-2026-${String(index + 1).padStart(3, "0")}`,
+  carnet:
+    index === 0
+      ? "E2E-1785904852866-cl0n5q"
+      : `TEST-2026-${String(index + 1).padStart(3, "0")}`,
   historicalLoad: index,
   active: true,
 }));

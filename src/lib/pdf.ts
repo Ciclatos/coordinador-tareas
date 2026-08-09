@@ -448,15 +448,15 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
     page = addAdminPage("NOTA DEL COORDINADOR", `Punteo final guardado para la tarea seleccionada${summaryMemberGroups.length > 1 ? ` · Página ${groupIndex + 1} de ${summaryMemberGroups.length}` : ""}`);
     let summaryY = 706;
     page.drawRectangle({ x: 50, y: summaryY - 38, width: 512, height: 38, color: green });
-    [["PARTICIPANTE", 60], ["CARNÉ", 376], ["PUNTEO", 490]].forEach(([label, x]) => drawText(page, String(label), Number(x), summaryY - 24, 8.5, fonts.bold, { color: rgb(1, 1, 1) }));
+    [["PARTICIPANTE", 60], ["CARNÉ", 350], ["PUNTEO", 500]].forEach(([label, x]) => drawText(page, String(label), Number(x), summaryY - 24, 8.5, fonts.bold, { color: rgb(1, 1, 1) }));
     summaryY -= 38;
     memberGroup.forEach((member, index) => {
       const evaluation = data.evaluations.find((item) => item.memberId === member.id);
       const rowHeight = 50;
       page.drawRectangle({ x: 50, y: summaryY - rowHeight, width: 512, height: rowHeight, color: index % 2 ? rgb(0.965, 0.98, 0.97) : rgb(1, 1, 1), borderColor: border, borderWidth: 0.5 });
-      wrap(member.name, fonts.bold, 9.5, 304).slice(0, 2).forEach((line, lineIndex) => drawText(page, line, 60, summaryY - 18 - lineIndex * 11, 9.5, fonts.bold));
-      drawText(page, member.carnet, 376, summaryY - 29, 9.5, fonts.regular, { maxWidth: 106 });
-      drawText(page, evaluation ? `${evaluation.total}/100` : "-/100", 494, summaryY - 29, 11.5, fonts.bold, { color: green });
+      wrap(member.name, fonts.bold, 9.5, 276).slice(0, 2).forEach((line, lineIndex) => drawText(page, line, 60, summaryY - 18 - lineIndex * 11, 9.5, fonts.bold));
+      drawText(page, member.carnet, 350, summaryY - 29, 8, fonts.regular, { maxWidth: 138 });
+      drawText(page, evaluation ? `${evaluation.total}/100` : "-/100", 500, summaryY - 29, 11.5, fonts.bold, { color: green });
       summaryY -= rowHeight;
     });
   }

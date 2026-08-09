@@ -34,6 +34,19 @@ const text = run(python, [
   "from pypdf import PdfReader; import sys; print('\\n'.join((p.extract_text() or '') for p in PdfReader(sys.argv[1]).pages))",
   input,
 ]);
+const administrativeSizes = JSON.parse(
+  run(python, [
+    "-c",
+    "from pypdf import PdfReader; import json,sys; r=PdfReader(sys.argv[1]); print(json.dumps([[float(p.mediabox.width),float(p.mediabox.height)] for p in r.pages[:10]]))",
+    input,
+  ]),
+);
+if (
+  administrativeSizes.some(
+    ([width, height]) => width !== 612 || height !== 792,
+  )
+)
+  throw new Error("Las páginas administrativas no conservan tamaño carta vertical.");
 const headings = [
   "UNIVERSIDAD MARIANO GÁLVEZ DE GUATEMALA",
   "DISTRIBUCIÓN DE EJERCICIOS",
@@ -51,5 +64,15 @@ if ((text.match(/INTEGRANTES DEL GRUPO/g) || []).length !== 1)
   throw new Error("La lista de integrantes debe aparecer una sola vez en la carátula.");
 for (const expected of ["TEST-2026-014", "100/100", "87/100", "Sección 5.3", "Sección 5.4", "Sección 5.5"]) {
   if (!text.includes(expected)) throw new Error(`Falta el dato QA: ${expected}`);
+}
+for (const criterion of [
+  "Puntualidad",
+  "Presentación PDF",
+  "Trabajo en equipo",
+  "Comunicación",
+  "Ejercicios completos",
+]) {
+  if ((text.match(new RegExp(criterion, "g")) || []).length !== 14)
+    throw new Error(`El criterio ${criterion} no aparece una vez por integrante.`);
 }
 console.log(JSON.stringify({ input, pages, pageSize, rendered: rendered.length }, null, 2));

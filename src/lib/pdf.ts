@@ -53,7 +53,6 @@ export type AssignmentPdfData = {
 };
 
 const letter: [number, number] = [612, 792];
-const letterLandscape: [number, number] = [792, 612];
 const green = rgb(0.35, 0.62, 0.16);
 const dark = rgb(0.08, 0.11, 0.1);
 const muted = rgb(0.38, 0.42, 0.4);
@@ -100,15 +99,15 @@ function header(page: PDFPage, title: string, subtitle: string, fonts: Fonts) {
   const { width, height } = page.getSize();
   page.drawRectangle({ x: 0, y: height - 48, width, height: 48, color: dark });
   page.drawRectangle({ x: 0, y: height - 48, width: 10, height: 48, color: green });
-  drawText(page, title, 48, height - 24, 15, fonts.bold, { color: rgb(1, 1, 1) });
-  drawText(page, subtitle, 48, height - 39, 8, fonts.regular, { color: rgb(0.84, 0.88, 0.85) });
+  drawText(page, title, 48, height - 24, 16, fonts.bold, { color: rgb(1, 1, 1) });
+  drawText(page, subtitle, 48, height - 39, 9, fonts.regular, { color: rgb(0.84, 0.88, 0.85) });
 }
 
 function footer(page: PDFPage, pageNumber: number, systemName: string, fonts: Fonts) {
   const { width } = page.getSize();
   page.drawLine({ start: { x: 48, y: 38 }, end: { x: width - 48, y: 38 }, thickness: 0.6, color: border });
-  drawText(page, systemName, 48, 23, 7.5, fonts.regular, { color: muted });
-  drawText(page, String(pageNumber), width - 64, 23, 8, fonts.bold, { color: muted });
+  drawText(page, systemName, 48, 23, 8, fonts.regular, { color: muted });
+  drawText(page, String(pageNumber), width - 64, 23, 8.5, fonts.bold, { color: muted });
 }
 
 function formatDate(value: string, withTime = false) {
@@ -237,7 +236,7 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
     const x = 60 + column * 252;
     const y = 430 - row * 34;
     drawText(page, label.toUpperCase(), x, y, 6.8, fonts.bold, { color: muted });
-    drawText(page, value, x, y - 14, 9, fonts.regular, { maxWidth: 232 });
+    drawText(page, value, x, y - 14, 10, fonts.regular, { maxWidth: 232 });
   });
   drawText(page, "INTEGRANTES DEL GRUPO", 56, 250, 8, fonts.bold, { color: muted });
   const memberColumns = 2;
@@ -247,8 +246,8 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
     const row = Math.floor(index / memberColumns);
     const x = 56 + column * memberColumnWidth;
     const y = 224 - row * 24;
-    drawText(page, member.name, x, y, 7.5, fonts.bold, { maxWidth: memberColumnWidth - 12 });
-    drawText(page, member.carnet, x, y - 10, 6.3, fonts.regular, { color: muted, maxWidth: memberColumnWidth - 12 });
+    drawText(page, member.name, x, y, 8.2, fonts.bold, { maxWidth: memberColumnWidth - 12 });
+    drawText(page, member.carnet, x, y - 10, 7, fonts.regular, { color: muted, maxWidth: memberColumnWidth - 12 });
   });
   drawText(page, `Grupo ${data.course.groupNumber || "-"} · ${formatDate(data.assignment.weekStart)} al ${formatDate(data.assignment.weekEnd)}`, 56, 62, 9, fonts.bold, { color: green });
   footer(page, pageNumber, data.systemName, fonts);
@@ -256,8 +255,8 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
   // 2. Distribución de ejercicios, con bloques de secciones legibles.
   const sections = [...new Set(data.exercises.map((exercise) => exercise.section))];
   const sectionGroups = Array.from(
-    { length: Math.max(1, Math.ceil(sections.length / 5)) },
-    (_, index) => sections.slice(index * 5, index * 5 + 5),
+    { length: Math.max(1, Math.ceil(sections.length / 3)) },
+    (_, index) => sections.slice(index * 3, index * 3 + 3),
   );
   for (const [groupIndex, sectionGroup] of sectionGroups.entries()) {
     const distributionRows = data.members.map((member) => {
@@ -276,42 +275,49 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
     });
     let rowIndex = 0;
     while (rowIndex < distributionRows.length || (!distributionRows.length && rowIndex === 0)) {
+      const remainingRows = distributionRows.length - rowIndex;
+      const remainingPages = Math.max(1, Math.ceil(remainingRows / 9));
+      const targetRows = Math.max(1, Math.ceil(remainingRows / remainingPages));
       page = addAdminPage(
         "DISTRIBUCIÓN DE EJERCICIOS",
         `${data.course.name} · Tarea ${data.assignment.number}${sectionGroups.length > 1 ? ` · Bloque ${groupIndex + 1} de ${sectionGroups.length}` : ""}`,
-        letterLandscape,
+        letter,
       );
-      const tableX = 34;
-      const nameWidth = 172;
-      const totalWidth = 48;
-      const sectionWidth = (724 - nameWidth - totalWidth) / Math.max(1, sectionGroup.length);
-      let tableY = 530;
-      page.drawRectangle({ x: tableX, y: tableY - 34, width: 724, height: 34, color: green });
-      drawText(page, "INTEGRANTE", tableX + 7, tableY - 21, 7.5, fonts.bold, { color: rgb(1, 1, 1) });
+      const tableX = 42;
+      const tableWidth = 528;
+      const nameWidth = 154;
+      const totalWidth = 46;
+      const sectionWidth = (tableWidth - nameWidth - totalWidth) / Math.max(1, sectionGroup.length);
+      let tableY = 706;
+      page.drawRectangle({ x: tableX, y: tableY - 38, width: tableWidth, height: 38, color: green });
+      drawText(page, "INTEGRANTE", tableX + 8, tableY - 24, 8, fonts.bold, { color: rgb(1, 1, 1) });
       sectionGroup.forEach((section, index) =>
-        drawText(page, section, tableX + nameWidth + index * sectionWidth + 5, tableY - 21, 7.5, fonts.bold, { color: rgb(1, 1, 1), maxWidth: sectionWidth - 10 }),
+        drawText(page, section, tableX + nameWidth + index * sectionWidth + 6, tableY - 24, 8, fonts.bold, { color: rgb(1, 1, 1), maxWidth: sectionWidth - 12 }),
       );
-      drawText(page, "TOTAL", tableX + 724 - totalWidth + 6, tableY - 21, 7.2, fonts.bold, { color: rgb(1, 1, 1) });
-      tableY -= 34;
+      drawText(page, "TOTAL", tableX + tableWidth - totalWidth + 5, tableY - 24, 7.5, fonts.bold, { color: rgb(1, 1, 1) });
+      tableY -= 38;
       let drewRow = false;
+      let rowsDrawn = 0;
       while (rowIndex < distributionRows.length) {
+        if (rowsDrawn >= targetRows) break;
         const row = distributionRows[rowIndex];
-        const nameLines = wrap(row.member.name, fonts.bold, 7.8, nameWidth - 14);
+        const nameLines = wrap(row.member.name, fonts.bold, 8.5, nameWidth - 16);
         const sectionLines = row.bySection.map((labels) =>
-          wrap(labels.join(", ") || "-", fonts.regular, 7.5, sectionWidth - 12),
+          wrap(labels.join(", ") || "-", fonts.regular, 8.3, sectionWidth - 14),
         );
         const lineCount = Math.max(2, nameLines.length + 1, ...sectionLines.map((lines) => lines.length));
-        const rowHeight = Math.max(38, lineCount * 10 + 12);
+        const rowHeight = Math.max(46, lineCount * 12 + 14);
         if (tableY - rowHeight < 54 && drewRow) break;
-        page.drawRectangle({ x: tableX, y: tableY - rowHeight, width: 724, height: rowHeight, color: rowIndex % 2 ? rgb(0.965, 0.98, 0.97) : rgb(1, 1, 1), borderColor: border, borderWidth: 0.5 });
-        nameLines.forEach((line, index) => drawText(page, line, tableX + 7, tableY - 14 - index * 10, 7.8, fonts.bold));
-        drawText(page, row.member.carnet, tableX + 7, tableY - rowHeight + 8, 6.5, fonts.regular, { color: muted });
+        page.drawRectangle({ x: tableX, y: tableY - rowHeight, width: tableWidth, height: rowHeight, color: rowIndex % 2 ? rgb(0.965, 0.98, 0.97) : rgb(1, 1, 1), borderColor: border, borderWidth: 0.5 });
+        nameLines.forEach((line, index) => drawText(page, line, tableX + 8, tableY - 16 - index * 11, 8.5, fonts.bold));
+        drawText(page, row.member.carnet, tableX + 8, tableY - rowHeight + 9, 7, fonts.regular, { color: muted });
         sectionLines.forEach((lines, sectionIndex) =>
-          lines.forEach((line, lineIndex) => drawText(page, line, tableX + nameWidth + sectionIndex * sectionWidth + 6, tableY - 14 - lineIndex * 10, 7.5, fonts.regular)),
+          lines.forEach((line, lineIndex) => drawText(page, line, tableX + nameWidth + sectionIndex * sectionWidth + 7, tableY - 16 - lineIndex * 11, 8.3, fonts.regular)),
         );
-        drawText(page, String(row.total), tableX + 724 - totalWidth + 16, tableY - 20, 9, fonts.bold, { color: green });
+        drawText(page, String(row.total), tableX + tableWidth - totalWidth + 16, tableY - 24, 10, fonts.bold, { color: green });
         tableY -= rowHeight;
         rowIndex += 1;
+        rowsDrawn += 1;
         drewRow = true;
       }
       if (!distributionRows.length) rowIndex += 1;
@@ -319,7 +325,7 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
   }
 
   // 3. Reporte de trabajo individual / desempeño.
-  const reportLines = wrap(data.reportBody || "Sin reporte guardado.", fonts.regular, 10, 500);
+  const reportLines = wrap(data.reportBody || "Sin reporte guardado.", fonts.regular, 11, 500);
   let reportIndex = 0;
   while (reportIndex < reportLines.length || reportIndex === 0) {
     page = addAdminPage("REPORTE DE TRABAJO Y DESEMPEÑO", `Semana ${data.assignment.weekNumber} · Tarea ${data.assignment.number}`);
@@ -327,8 +333,8 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
     drawText(page, data.assignment.topic || "Desempeño grupal", 56, 682, 9, fonts.regular, { color: green, maxWidth: 500 });
     let reportY = 646;
     while (reportIndex < reportLines.length && reportY >= 66) {
-      drawText(page, reportLines[reportIndex], 56, reportY, 10, fonts.regular);
-      reportY -= 16;
+      drawText(page, reportLines[reportIndex], 56, reportY, 11, fonts.regular);
+      reportY -= 18;
       reportIndex += 1;
     }
     if (!reportLines.length) reportIndex += 1;
@@ -336,57 +342,96 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
 
   // 4. Aspectos evaluables numéricos.
   const criteria = data.evaluations[0]?.scores ?? [];
-  const criterionGroups = Array.from(
-    { length: Math.max(1, Math.ceil(criteria.length / 4)) },
-    (_, index) => criteria.slice(index * 4, index * 4 + 4),
+  const criterionRows = Math.max(1, Math.ceil(criteria.length / 2));
+  const evaluationBlockHeight = 54 + criterionRows * 28;
+  const membersPerEvaluationPage = Math.max(
+    1,
+    Math.floor(632 / evaluationBlockHeight),
   );
-  for (const [criteriaIndex, criterionGroup] of criterionGroups.entries()) {
-    const evaluationPageCount = Math.max(1, Math.ceil(data.members.length / 12));
-    const evaluationPageSize = Math.max(
-      1,
-      Math.ceil(data.members.length / evaluationPageCount),
+  const evaluationPageCount = Math.max(
+    1,
+    Math.ceil(data.members.length / membersPerEvaluationPage),
+  );
+  const evaluationPageSize = Math.max(
+    1,
+    Math.ceil(data.members.length / evaluationPageCount),
+  );
+  const evaluationMemberGroups = Array.from(
+    { length: evaluationPageCount },
+    (_, index) =>
+      data.members.slice(
+        index * evaluationPageSize,
+        index * evaluationPageSize + evaluationPageSize,
+      ),
+  );
+  for (const [groupIndex, memberGroup] of evaluationMemberGroups.entries()) {
+    page = addAdminPage(
+      "ASPECTOS EVALUABLES",
+      `Todos los criterios por integrante${evaluationMemberGroups.length > 1 ? ` · Página ${groupIndex + 1} de ${evaluationMemberGroups.length}` : ""}`,
     );
-    const memberGroups = Array.from(
-      { length: evaluationPageCount },
-      (_, index) =>
-        data.members.slice(
-          index * evaluationPageSize,
-          index * evaluationPageSize + evaluationPageSize,
-        ),
-    );
-    for (const [memberGroupIndex, memberGroup] of memberGroups.entries()) {
-      page = addAdminPage("ASPECTOS EVALUABLES", `Puntuaciones numéricas${criterionGroups.length > 1 ? ` · Bloque ${criteriaIndex + 1} de ${criterionGroups.length}` : ""}${memberGroups.length > 1 ? ` · Integrantes ${memberGroupIndex + 1} de ${memberGroups.length}` : ""}`);
-      const tableX = 44;
-      const nameWidth = 190;
-      const totalWidth = 54;
-      const scoreWidth = (524 - nameWidth - totalWidth) / Math.max(1, criterionGroup.length);
-      let tableY = 706;
-      page.drawRectangle({ x: tableX, y: tableY - 42, width: 524, height: 42, color: green });
-      drawText(page, "INTEGRANTE", tableX + 7, tableY - 25, 7.5, fonts.bold, { color: rgb(1, 1, 1) });
-      criterionGroup.forEach((criterion, index) => {
-        const lines = wrap(criterion.name, fonts.bold, 6.5, scoreWidth - 8).slice(0, 2);
-        lines.forEach((line, lineIndex) => drawText(page, line, tableX + nameWidth + index * scoreWidth + 4, tableY - 14 - lineIndex * 8, 6.5, fonts.bold, { color: rgb(1, 1, 1) }));
-        drawText(page, `/${criterion.maxScore}`, tableX + nameWidth + index * scoreWidth + 4, tableY - 36, 6.2, fonts.regular, { color: rgb(1, 1, 1) });
+    let blockTop = 712;
+    memberGroup.forEach((member, memberIndex) => {
+      const evaluation = data.evaluations.find(
+        (item) => item.memberId === member.id,
+      );
+      const blockY = blockTop - evaluationBlockHeight;
+      page.drawRectangle({
+        x: 46,
+        y: blockY,
+        width: 520,
+        height: evaluationBlockHeight - 8,
+        color: memberIndex % 2 ? rgb(0.97, 0.985, 0.975) : rgb(1, 1, 1),
+        borderColor: border,
+        borderWidth: 0.7,
       });
-      drawText(page, "TOTAL", tableX + 524 - totalWidth + 6, tableY - 25, 7, fonts.bold, { color: rgb(1, 1, 1) });
-      tableY -= 42;
-      memberGroup.forEach((member, index) => {
-        const evaluation = data.evaluations.find((item) => item.memberId === member.id);
-        const rowHeight = 44;
-        page.drawRectangle({ x: tableX, y: tableY - rowHeight, width: 524, height: rowHeight, color: index % 2 ? rgb(0.965, 0.98, 0.97) : rgb(1, 1, 1), borderColor: border, borderWidth: 0.5 });
-        wrap(member.name, fonts.bold, 7.8, nameWidth - 14).slice(0, 2).forEach((line, lineIndex) => drawText(page, line, tableX + 7, tableY - 14 - lineIndex * 9, 7.8, fonts.bold));
-        criterionGroup.forEach((criterion, criterionIndex) => {
-          const score = evaluation?.scores.find((item) => item.name === criterion.name)?.score;
-          drawText(page, score === undefined ? "-" : String(score), tableX + nameWidth + criterionIndex * scoreWidth + scoreWidth / 2 - 5, tableY - 25, 9, fonts.regular);
+      page.drawRectangle({
+        x: 46,
+        y: blockTop - 40,
+        width: 520,
+        height: 32,
+        color: green,
+      });
+      drawText(page, member.name, 58, blockTop - 28, 10, fonts.bold, {
+        color: rgb(1, 1, 1),
+        maxWidth: 388,
+      });
+      drawText(
+        page,
+        evaluation ? `${evaluation.total}/100` : "-/100",
+        490,
+        blockTop - 28,
+        10.5,
+        fonts.bold,
+        { color: rgb(1, 1, 1) },
+      );
+      criteria.forEach((criterion, criterionIndex) => {
+        const column = criterionIndex % 2;
+        const row = Math.floor(criterionIndex / 2);
+        const cellX = 58 + column * 250;
+        const cellY = blockTop - 62 - row * 28;
+        const score = evaluation?.scores.find(
+          (item) => item.name === criterion.name,
+        )?.score;
+        drawText(page, criterion.name, cellX, cellY, 8.5, fonts.regular, {
+          color: muted,
+          maxWidth: 184,
         });
-        drawText(page, evaluation ? `${evaluation.total}` : "-", tableX + 524 - totalWidth + 12, tableY - 25, 9, fonts.bold, { color: green });
-        tableY -= rowHeight;
+        drawText(
+          page,
+          `${score ?? "-"}/${criterion.maxScore}`,
+          cellX + 190,
+          cellY,
+          9.5,
+          fonts.bold,
+          { color: green },
+        );
       });
-    }
+      blockTop -= evaluationBlockHeight;
+    });
   }
 
   // 5. Nota del coordinador.
-  const summaryPageCount = Math.max(1, Math.ceil(data.members.length / 12));
+  const summaryPageCount = Math.max(1, Math.ceil(data.members.length / 11));
   const summaryPageSize = Math.max(
     1,
     Math.ceil(data.members.length / summaryPageCount),
@@ -402,16 +447,16 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
   for (const [groupIndex, memberGroup] of summaryMemberGroups.entries()) {
     page = addAdminPage("NOTA DEL COORDINADOR", `Punteo final guardado para la tarea seleccionada${summaryMemberGroups.length > 1 ? ` · Página ${groupIndex + 1} de ${summaryMemberGroups.length}` : ""}`);
     let summaryY = 706;
-    page.drawRectangle({ x: 50, y: summaryY - 34, width: 512, height: 34, color: green });
-    [["PARTICIPANTE", 58], ["CARNÉ", 376], ["PUNTEO", 492]].forEach(([label, x]) => drawText(page, String(label), Number(x), summaryY - 21, 7.5, fonts.bold, { color: rgb(1, 1, 1) }));
-    summaryY -= 34;
+    page.drawRectangle({ x: 50, y: summaryY - 38, width: 512, height: 38, color: green });
+    [["PARTICIPANTE", 60], ["CARNÉ", 376], ["PUNTEO", 490]].forEach(([label, x]) => drawText(page, String(label), Number(x), summaryY - 24, 8.5, fonts.bold, { color: rgb(1, 1, 1) }));
+    summaryY -= 38;
     memberGroup.forEach((member, index) => {
       const evaluation = data.evaluations.find((item) => item.memberId === member.id);
-      const rowHeight = 44;
+      const rowHeight = 50;
       page.drawRectangle({ x: 50, y: summaryY - rowHeight, width: 512, height: rowHeight, color: index % 2 ? rgb(0.965, 0.98, 0.97) : rgb(1, 1, 1), borderColor: border, borderWidth: 0.5 });
-      wrap(member.name, fonts.bold, 8.5, 304).slice(0, 2).forEach((line, lineIndex) => drawText(page, line, 58, summaryY - 16 - lineIndex * 10, 8.5, fonts.bold));
-      drawText(page, member.carnet, 376, summaryY - 26, 8.5, fonts.regular, { maxWidth: 106 });
-      drawText(page, evaluation ? `${evaluation.total}/100` : "-/100", 496, summaryY - 26, 10, fonts.bold, { color: green });
+      wrap(member.name, fonts.bold, 9.5, 304).slice(0, 2).forEach((line, lineIndex) => drawText(page, line, 60, summaryY - 18 - lineIndex * 11, 9.5, fonts.bold));
+      drawText(page, member.carnet, 376, summaryY - 29, 9.5, fonts.regular, { maxWidth: 106 });
+      drawText(page, evaluation ? `${evaluation.total}/100` : "-/100", 494, summaryY - 29, 11.5, fonts.bold, { color: green });
       summaryY -= rowHeight;
     });
   }

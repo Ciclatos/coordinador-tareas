@@ -59,7 +59,7 @@ describe("constructor PDF", () => {
   it("genera las cinco secciones administrativas sin duplicar integrantes", async () => {
     const bytes = await createAssignmentPdf(data());
     const pdf = await PDFDocument.load(bytes);
-    expect(pdf.getPageCount()).toBe(6);
+    expect(pdf.getPageCount()).toBe(5);
     expect(pdf.getTitle()).toBe("Matemática de prueba - Tarea 5");
   });
 
@@ -83,7 +83,13 @@ describe("constructor PDF", () => {
     const bytes = await createAssignmentPdf(input);
     const pdf = await PDFDocument.load(bytes);
     expect(pdf.getPageCount()).toBeGreaterThan(5);
-    expect(pdf.getPages().some((page) => page.getWidth() > page.getHeight())).toBe(true);
+    expect(
+      pdf
+        .getPages()
+        .every(
+          (page) => page.getWidth() === 612 && page.getHeight() === 792,
+        ),
+    ).toBe(true);
   });
 
   it("incorpora todas las páginas de una entrega PDF", async () => {
@@ -95,7 +101,7 @@ describe("constructor PDF", () => {
     });
     const bytes = await createAssignmentPdf(data([file]));
     const pdf = await PDFDocument.load(bytes);
-    expect(pdf.getPageCount()).toBe(8);
+    expect(pdf.getPageCount()).toBe(7);
   });
 
   it("aplica selección de páginas y rotación a una entrega almacenada", async () => {
@@ -117,7 +123,7 @@ describe("constructor PDF", () => {
     ];
     const bytes = await createAssignmentPdf(input);
     const pdf = await PDFDocument.load(bytes);
-    expect(pdf.getPageCount()).toBe(7);
-    expect(pdf.getPage(6).getRotation().angle).toBe(90);
+    expect(pdf.getPageCount()).toBe(6);
+    expect(pdf.getPage(5).getRotation().angle).toBe(90);
   });
 });

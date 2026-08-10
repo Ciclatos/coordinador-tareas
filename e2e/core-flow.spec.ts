@@ -258,7 +258,10 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
     .click();
   await page.getByRole("button", { name: "Aplicar 20 a todos" }).click();
   await page.getByLabel("Comentario de Ana Integrante E2E").fill("Se observó procedimiento incompleto y presentación poco legible.");
-  await expect(page.locator(".save-status")).toHaveText("Guardando…", { timeout: 30_000 });
+  await expect.poll(async () => (await prisma.memberEvaluation.findFirst({
+    where: { assignment: { course: { user: { email } } } },
+    select: { comments: true },
+  }))?.comments, { timeout: 30_000 }).toContain("procedimiento incompleto");
   await expect(page.locator(".save-status")).toHaveText("Guardado ✓", { timeout: 30_000 });
   await expect(page.getByRole("cell", { name: "100" })).toBeVisible();
 

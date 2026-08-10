@@ -14,6 +14,7 @@ enum AssignmentStatus {
   RECEIVING
   REVIEW
   FINALIZED
+  CONSOLIDATED
   ARCHIVED
 }
 
@@ -41,14 +42,14 @@ enum TutorialStatus {
 }
 
 model User {
-  id               String                 @id @default(cuid())
-  email            String                 @unique
-  passwordHash     String?
-  createdAt        DateTime               @default(now())
-  tutorialEligible Boolean                @default(false)
-  profile          UserProfile?
-  courses          Course[]
-  tutorialProgress UserTutorialProgress[]
+  id                String                       @id @default(cuid())
+  email             String                       @unique
+  passwordHash      String?
+  createdAt         DateTime                     @default(now())
+  tutorialEligible  Boolean                      @default(false)
+  profile           UserProfile?
+  courses           Course[]
+  tutorialProgress  UserTutorialProgress[]
   activeAssignments ActiveAssignmentPreference[]
 }
 
@@ -100,29 +101,29 @@ model UserProfile {
 }
 
 model Course {
-  id              String               @id @default(cuid())
-  userId          String
-  user            User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name            String
-  code            String?
-  teacher         String?
-  degree          String?
-  faculty         String?
-  university      String?
-  campus          String?
-  shift           String?
-  cycle           String?
-  semester        String?
-  section         String?
-  groupNumber     String?
-  academicYear    Int?
-  active          Boolean              @default(true)
-  logoPath        String?
-  defaultPdfOrder Json?
-  members         CourseMember[]
-  assignments     Assignment[]
-  templates       EvaluationTemplate[]
-  covers          CoverTemplate[]
+  id                String                       @id @default(cuid())
+  userId            String
+  user              User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name              String
+  code              String?
+  teacher           String?
+  degree            String?
+  faculty           String?
+  university        String?
+  campus            String?
+  shift             String?
+  cycle             String?
+  semester          String?
+  section           String?
+  groupNumber       String?
+  academicYear      Int?
+  active            Boolean                      @default(true)
+  logoPath          String?
+  defaultPdfOrder   Json?
+  members           CourseMember[]
+  assignments       Assignment[]
+  templates         EvaluationTemplate[]
+  covers            CoverTemplate[]
   activeAssignments ActiveAssignmentPreference[]
 
   @@index([userId, active])
@@ -151,34 +152,38 @@ model CourseMember {
 }
 
 model Assignment {
-  id               String                      @id @default(cuid())
-  courseId         String
-  course           Course                      @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  number           Int
-  weekNumber       Int
-  title            String
-  topic            String?
-  weekStart        DateTime
-  weekEnd          DateTime
-  dueAt            DateTime
-  instructions     String?
-  status           AssignmentStatus            @default(DRAFT)
-  coordinatorNotes String?
-  pdfOrder         Json?
-  createdAt        DateTime                    @default(now())
-  updatedAt        DateTime                    @updatedAt
-  contentUpdatedAt DateTime                    @default(now())
-  sections         AssignmentSection[]
-  allocations      ExerciseAssignment[]
-  submissions      Submission[]
-  evaluations      MemberEvaluation[]
-  reports          Report[]
-  pdfBuilds        PdfBuild[]
-  snapshots        GroupWorkloadSnapshot[]
-  exclusions       AssignmentExclusion[]
-  submissionPortal AssignmentSubmissionPortal?
-  submissionAudit  SubmissionAuditEvent[]
-  activeForUsers   ActiveAssignmentPreference[]
+  id                  String                       @id @default(cuid())
+  courseId            String
+  course              Course                       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  number              Int
+  weekNumber          Int
+  title               String
+  topic               String?
+  weekStart           DateTime
+  weekEnd             DateTime
+  dueAt               DateTime
+  instructions        String?
+  status              AssignmentStatus             @default(DRAFT)
+  coordinatorNotes    String?
+  pdfOrder            Json?
+  createdAt           DateTime                     @default(now())
+  updatedAt           DateTime                     @updatedAt
+  contentUpdatedAt    DateTime                     @default(now())
+  finalizedAt         DateTime?
+  consolidatedAt      DateTime?
+  autoConsolidateDays Int?
+  consolidatedBytes   Int                          @default(0)
+  sections            AssignmentSection[]
+  allocations         ExerciseAssignment[]
+  submissions         Submission[]
+  evaluations         MemberEvaluation[]
+  reports             Report[]
+  pdfBuilds           PdfBuild[]
+  snapshots           GroupWorkloadSnapshot[]
+  exclusions          AssignmentExclusion[]
+  submissionPortal    AssignmentSubmissionPortal?
+  submissionAudit     SubmissionAuditEvent[]
+  activeForUsers      ActiveAssignmentPreference[]
 
   @@unique([courseId, number])
   @@index([courseId, status, dueAt])
@@ -310,20 +315,21 @@ model SubmissionAuditEvent {
 }
 
 model SubmissionFile {
-  id           String            @id @default(cuid())
-  versionId    String
-  version      SubmissionVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
-  exerciseId   String?
-  exercise     Exercise?         @relation(fields: [exerciseId], references: [id])
-  storageKey   String
-  originalName String
-  mimeType     String
-  kind         FileKind
-  sizeBytes    Int
-  pageCount    Int?
-  sortOrder    Int               @default(0)
-  rotation     Int               @default(0)
-  sha256       String
+  id              String            @id @default(cuid())
+  versionId       String
+  version         SubmissionVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  exerciseId      String?
+  exercise        Exercise?         @relation(fields: [exerciseId], references: [id])
+  storageKey      String?
+  originalName    String
+  mimeType        String
+  kind            FileKind
+  sizeBytes       Int
+  pageCount       Int?
+  sortOrder       Int               @default(0)
+  rotation        Int               @default(0)
+  sha256          String
+  binaryDeletedAt DateTime?
 
   @@index([versionId, sortOrder])
 }
@@ -348,15 +354,16 @@ model EvaluationCriterion {
 }
 
 model MemberEvaluation {
-  id           String           @id @default(cuid())
-  assignmentId String
-  assignment   Assignment       @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  memberId     String
-  member       CourseMember     @relation(fields: [memberId], references: [id])
-  total        Float
-  comments     String?
-  updatedAt    DateTime         @updatedAt
-  scores       CriterionScore[]
+  id                      String           @id @default(cuid())
+  assignmentId            String
+  assignment              Assignment       @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  memberId                String
+  member                  CourseMember     @relation(fields: [memberId], references: [id])
+  total                   Float
+  comments                String?
+  includeCommentsInReport Boolean          @default(true)
+  updatedAt               DateTime         @updatedAt
+  scores                  CriterionScore[]
 
   @@unique([assignmentId, memberId])
 }
@@ -374,12 +381,16 @@ model CriterionScore {
 }
 
 model Report {
-  id               String     @id @default(cuid())
-  assignmentId     String
-  assignment       Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  body             String
-  generatorVersion String
-  createdAt        DateTime   @default(now())
+  id                        String     @id @default(cuid())
+  assignmentId              String
+  assignment                Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  body                      String
+  generatorVersion          String
+  createdAt                 DateTime   @default(now())
+  updatedAt                 DateTime   @updatedAt
+  sourceSnapshotAt          DateTime?
+  manuallyEdited            Boolean    @default(false)
+  includeIndividualComments Boolean    @default(false)
 }
 
 model CoverTemplate {
@@ -393,16 +404,18 @@ model CoverTemplate {
 }
 
 model PdfBuild {
-  id           String         @id @default(cuid())
-  assignmentId String
-  assignment   Assignment     @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  version      Int
-  status       String
-  storageKey   String?
-  sizeBytes    Int?
-  createdAt    DateTime       @default(now())
+  id                String         @id @default(cuid())
+  assignmentId      String
+  assignment        Assignment     @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  version           Int
+  status            String
+  storageKey        String?
+  sizeBytes         Int?
+  createdAt         DateTime       @default(now())
   contentSnapshotAt DateTime?
-  items        PdfBuildItem[]
+  qualityProfile    String         @default("balanced")
+  sourceBytes       Int?
+  items             PdfBuildItem[]
 
   @@unique([assignmentId, version])
 }

@@ -14,6 +14,8 @@ const schema = z.object({
   uploadId: z.string().uuid(),
   pathname: z.string().min(1).max(500),
   contentSnapshotAt: z.string().datetime(),
+  qualityProfile: z.enum(["high", "balanced", "compact"]).default("balanced"),
+  sourceBytes: z.number().int().nonnegative().max(1_000_000_000).optional(),
   items: z.array(z.object({
     kind: z.string().min(1).max(30),
     sourceId: z.string().cuid().nullable().optional(),
@@ -32,9 +34,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Ruta de compilación inválida." }, { status: 400 });
   const assignment = await prisma.assignment.findFirst({
     where: { id: parsed.data.assignmentId, course: { userId: session.userId } },
-    select: { id: true },
+    select: { id: true, status: true },
   });
   if (!assignment) return NextResponse.json({ error: "No tienes acceso a esta tarea." }, { status: 403 });
+  if (assignment.status === "CONSOLIDATED")
+    return NextResponse.json(
+      { error: "La tarea está consolidada y no puede reconstruirse sin volver a cargar las entregas." },
+      { status: 409 },
+    );
   try {
     const blob = await get(expected, { access: "private", useCache: false });
     if (!blob || blob.statusCode !== 200) throw new Error("No se encontró el PDF generado.");
@@ -54,11 +61,12 @@ export async function POST(request: Request) {
         storageKey: expected,
         sizeBytes: details.size,
         contentSnapshotAt: new Date(parsed.data.contentSnapshotAt),
+        qualityProfile: parsed.data.qualityProfile,
+        sourceBytes: parsed.data.sourceBytes,
         items: { create: parsed.data.items.map((item, sortOrder) => ({ ...item, sortOrder })) },
       },
       select: { id: true, version: true },
     });
-    await prisma.assignment.update({ where: { id: assignment.id }, data: { status: "FINALIZED" } });
     const configuredRetention = Number(process.env.PDF_BUILD_RETENTION);
     const retention = Number.isInteger(configuredRetention) && configuredRetention > 0
       ? configuredRetention

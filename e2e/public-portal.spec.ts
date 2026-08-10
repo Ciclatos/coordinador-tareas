@@ -83,7 +83,7 @@ test.afterAll(async () => {
     select: { storageKey: true },
   });
   await deleteBlobKeysWithRetry([
-      ...files.map((file) => file.storageKey),
+      ...files.flatMap((file) => file.storageKey ? [file.storageKey] : []),
       ...builds.flatMap((build) =>
         build.storageKey ? [build.storageKey] : [],
       ),

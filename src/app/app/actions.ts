@@ -6,6 +6,9 @@ import { requireSession } from "@/lib/session";
 import { reportText } from "@/lib/domain";
 import { parseMemberCsv } from "@/lib/member-csv";
 import { parseGuatemalaDateTimeLocal } from "@/lib/guatemala-date";
+import { checkConsolidation } from "@/lib/consolidation";
+import { deleteBlobKeysWithRetry } from "@/lib/blob-cleanup";
+import { buildCoordinatorObservations } from "@/lib/report-observations";
 
 export type FormState =
   | { ok?: boolean; message?: string; errors?: Record<string, string[]> }
@@ -94,6 +97,7 @@ const evaluationSchema = z.object({
           scores: z.array(z.number().min(0).max(100)).min(1).max(10),
           reasons: z.array(z.string().trim().max(300)).min(1).max(10).optional(),
           comments: z.string().trim().max(1000).optional(),
+          includeCommentsInReport: z.boolean().default(true),
         })
         .superRefine((item, context) => {
           if (item.reasons && item.reasons.length !== item.scores.length)
@@ -121,6 +125,7 @@ const evaluationTemplateSchema = z.object({
 const reportSchema = z.object({
   assignmentId: z.string().cuid(),
   body: z.string().trim().min(50).max(10000).optional(),
+  includeIndividualComments: z.boolean().default(false),
 });
 const profileSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -803,12 +808,13 @@ export async function saveEvaluations(
             memberId: item.memberId,
           },
         },
-        update: { total, comments: item.comments || null },
+        update: { total, comments: item.comments || null, includeCommentsInReport: item.includeCommentsInReport },
         create: {
           assignmentId: assignment.id,
           memberId: item.memberId,
           total,
           comments: item.comments || null,
+          includeCommentsInReport: item.includeCommentsInReport,
         },
         select: { id: true },
       });
@@ -898,7 +904,22 @@ export async function saveWeeklyReport(
           },
         },
       },
-      submissions: { select: { late: true } },
+      submissions: {
+        select: {
+          late: true,
+          status: true,
+          reviewComment: true,
+          member: { select: { id: true, fullName: true } },
+        },
+      },
+      evaluations: {
+        select: {
+          memberId: true,
+          comments: true,
+          includeCommentsInReport: true,
+          member: { select: { fullName: true } },
+        },
+      },
       exclusions: { select: { memberId: true } },
     },
   });
@@ -922,9 +943,7 @@ export async function saveWeeklyReport(
     participatingMembers.length - assignment.submissions.length,
   );
   const late = assignment.submissions.filter((submission) => submission.late).length;
-  const body =
-    parsed.data.body ??
-    reportText(
+  const generatedBase = reportText(
       assignment.sections.map((section) => section.name),
       pending,
       late,
@@ -935,17 +954,41 @@ export async function saveWeeklyReport(
         )
         .filter((name): name is string => Boolean(name)),
     );
-  await prisma.report.create({
-    data: {
-      assignmentId: assignment.id,
-      body,
-      generatorVersion: parsed.data.body ? "edited-v1" : "template-v1",
-    },
+  const evaluationByMember = new Map(assignment.evaluations.map((evaluation) => [evaluation.memberId, evaluation]));
+  const observations = assignment.course.members.map((member) => {
+    const evaluation = evaluationByMember.get(member.id);
+    const submission = assignment.submissions.find((item) => item.member.id === member.id);
+    return {
+      memberName: member.fullName,
+      evaluationComment: evaluation?.comments,
+      reviewComment: submission?.reviewComment,
+      status: submission?.status,
+      late: submission?.late,
+      includeInReport: evaluation?.includeCommentsInReport ?? true,
+    };
   });
-  await prisma.assignment.update({
-    where: { id: assignment.id },
-    data: { contentUpdatedAt: new Date() },
-  });
+  const summary = buildCoordinatorObservations(observations);
+  const generatedBody = [generatedBase, summary]
+    .filter(Boolean)
+    .join("\n\n");
+  const body = parsed.data.body ?? generatedBody;
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.report.create({
+      data: {
+        assignmentId: assignment.id,
+        body,
+        generatorVersion: parsed.data.body ? "edited-v2" : "deterministic-v2",
+        sourceSnapshotAt: now,
+        manuallyEdited: Boolean(parsed.data.body),
+        includeIndividualComments: parsed.data.includeIndividualComments,
+      },
+    }),
+    prisma.assignment.update({
+      where: { id: assignment.id },
+      data: { contentUpdatedAt: now },
+    }),
+  ]);
   revalidatePath("/app");
   return {
     ok: true,
@@ -981,6 +1024,9 @@ export async function getFreshPdfContent(assignmentId: string) {
         select: {
           memberId: true,
           total: true,
+          comments: true,
+          includeCommentsInReport: true,
+          member: { select: { fullName: true } },
           scores: {
             orderBy: { criterion: { sortOrder: "asc" } },
             select: {
@@ -990,13 +1036,18 @@ export async function getFreshPdfContent(assignmentId: string) {
           },
         },
       },
-      reports: { orderBy: { createdAt: "desc" }, take: 1, select: { body: true } },
+      reports: { orderBy: { createdAt: "desc" }, take: 1, select: { body: true, includeIndividualComments: true } },
     },
   });
   if (!assignment) throw new Error("No tienes acceso a esta tarea.");
   return {
     contentUpdatedAt: assignment.contentUpdatedAt.toISOString(),
     reportBody: assignment.reports[0]?.body ?? null,
+    individualObservations: assignment.reports[0]?.includeIndividualComments
+      ? assignment.evaluations
+          .filter((evaluation) => evaluation.includeCommentsInReport && evaluation.comments?.trim())
+          .map((evaluation) => ({ memberName: evaluation.member.fullName, observation: evaluation.comments!.trim() }))
+      : [],
     evaluations: assignment.evaluations.map((evaluation) => ({
       memberId: evaluation.memberId,
       total: evaluation.total,
@@ -1006,6 +1057,171 @@ export async function getFreshPdfContent(assignmentId: string) {
         score: score.score,
       })),
     })),
+  };
+}
+
+async function consolidationState(userId: string, assignmentId: string) {
+  const assignment = await prisma.assignment.findFirst({
+    where: { id: assignmentId, course: { userId } },
+    select: {
+      id: true,
+      number: true,
+      status: true,
+      contentUpdatedAt: true,
+      finalizedAt: true,
+      consolidatedAt: true,
+      autoConsolidateDays: true,
+      consolidatedBytes: true,
+      course: { select: { members: { where: { active: true }, select: { id: true } } } },
+      exclusions: { select: { memberId: true } },
+      submissions: {
+        select: {
+          status: true,
+          versions: {
+            orderBy: { version: "desc" },
+            select: {
+              files: { select: { id: true, storageKey: true, sizeBytes: true } },
+            },
+          },
+        },
+      },
+      pdfBuilds: {
+        where: { status: "READY", storageKey: { not: null } },
+        orderBy: { version: "desc" },
+        take: 1,
+        select: {
+          id: true,
+          status: true,
+          storageKey: true,
+          contentSnapshotAt: true,
+          items: { where: { kind: "SUBMISSION_FILE" }, select: { sourceId: true } },
+        },
+      },
+    },
+  });
+  if (!assignment) return null;
+  const excluded = new Set(assignment.exclusions.map((item) => item.memberId));
+  const participantCount = assignment.course.members.filter((member) => !excluded.has(member.id)).length;
+  const delivered = assignment.submissions.filter((submission) => submission.status !== "PENDING").length;
+  const files = assignment.submissions.flatMap((submission) =>
+    submission.versions.flatMap((version, versionIndex) =>
+      version.files.map((file) => ({ ...file, isCurrent: versionIndex === 0 })),
+    ),
+  );
+  const latest = assignment.pdfBuilds[0] ?? null;
+  const check = checkConsolidation({
+    status: assignment.status,
+    contentUpdatedAt: assignment.contentUpdatedAt,
+    pendingCount: Math.max(0, participantCount - delivered),
+    correctionCount: assignment.submissions.filter((submission) => submission.status === "NEEDS_CORRECTION").length,
+    incompleteUploadCount: 0,
+    files,
+    latestBuild: latest ? {
+      id: latest.id,
+      status: latest.status,
+      storageKey: latest.storageKey,
+      contentSnapshotAt: latest.contentSnapshotAt,
+      sourceIds: latest.items.flatMap((item) => item.sourceId ? [item.sourceId] : []),
+    } : null,
+  });
+  return { assignment, check };
+}
+
+export async function getConsolidationSummary(assignmentId: string) {
+  const { userId } = await requireSession();
+  const state = await consolidationState(userId, assignmentId);
+  if (!state) return { ok: false as const, message: "No tienes acceso a esta tarea." };
+  return {
+    ok: true as const,
+    status: state.assignment.status,
+    finalizedAt: state.assignment.finalizedAt?.toISOString() ?? null,
+    consolidatedAt: state.assignment.consolidatedAt?.toISOString() ?? null,
+    autoConsolidateDays: state.assignment.autoConsolidateDays,
+    consolidatedBytes: state.assignment.consolidatedBytes,
+    ...state.check,
+    storageKeys: undefined,
+  };
+}
+
+export async function finalizeAssignment(input: { assignmentId: string; autoConsolidateDays?: number | null }) {
+  const { userId } = await requireSession();
+  const parsed = z.object({
+    assignmentId: z.string().cuid(),
+    autoConsolidateDays: z.union([z.literal(7), z.literal(14), z.literal(30), z.null()]).optional(),
+  }).safeParse(input);
+  if (!parsed.success) return { ok: false, message: "Configuración de finalización inválida." };
+  const state = await consolidationState(userId, parsed.data.assignmentId);
+  if (!state) return { ok: false, message: "No tienes acceso a esta tarea." };
+  if (state.assignment.status === "CONSOLIDATED")
+    return { ok: false, message: "La tarea ya está consolidada." };
+  if (!state.check.eligible)
+    return { ok: false, message: state.check.reasons[0] ?? "La tarea todavía no puede finalizarse." };
+  await prisma.$transaction([
+    prisma.assignment.update({
+      where: { id: state.assignment.id },
+      data: {
+        status: "FINALIZED",
+        finalizedAt: new Date(),
+        autoConsolidateDays: parsed.data.autoConsolidateDays ?? null,
+      },
+    }),
+    prisma.assignmentSubmissionPortal.updateMany({
+      where: { assignmentId: state.assignment.id },
+      data: { enabled: false },
+    }),
+    prisma.submissionAuditEvent.create({
+      data: { assignmentId: state.assignment.id, eventType: "TASK_FINALIZED" },
+    }),
+  ]);
+  revalidatePath("/app");
+  return { ok: true, message: "Tarea finalizada. Los archivos aún se conservan." };
+}
+
+export async function consolidateAssignment(input: { assignmentId: string; confirmation: string }) {
+  const { userId } = await requireSession();
+  const parsed = z.object({ assignmentId: z.string().cuid(), confirmation: z.string().max(80) }).safeParse(input);
+  if (!parsed.success) return { ok: false, message: "Confirmación inválida." };
+  const state = await consolidationState(userId, parsed.data.assignmentId);
+  if (!state) return { ok: false, message: "No tienes acceso a esta tarea." };
+  if (state.assignment.status !== "FINALIZED")
+    return { ok: false, message: "Primero debe finalizar la tarea." };
+  if (parsed.data.confirmation.trim().toUpperCase() !== `LIBERAR TAREA ${state.assignment.number}`)
+    return { ok: false, message: `Escriba LIBERAR TAREA ${state.assignment.number} para confirmar.` };
+  if (!state.check.eligible)
+    return { ok: false, message: state.check.reasons[0] ?? "Genera una nueva versión del PDF antes de liberar almacenamiento." };
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.submissionFile.updateMany({
+      where: { id: { in: state.assignment.submissions.flatMap((submission) => submission.versions.flatMap((version) => version.files.map((file) => file.id))) } },
+      data: { storageKey: null, binaryDeletedAt: now },
+    }),
+    prisma.assignment.update({
+      where: { id: state.assignment.id },
+      data: { status: "CONSOLIDATED", consolidatedAt: now, consolidatedBytes: state.check.reclaimableBytes },
+    }),
+    prisma.submissionAuditEvent.create({
+      data: {
+        assignmentId: state.assignment.id,
+        eventType: "TASK_CONSOLIDATED",
+        metadata: { fileCount: state.check.fileCount, reclaimedBytes: state.check.reclaimableBytes },
+      },
+    }),
+  ]);
+  let cleanupWarning = false;
+  if (state.check.storageKeys.length) {
+    try {
+      await deleteBlobKeysWithRetry(state.check.storageKeys);
+    } catch (error) {
+      cleanupWarning = true;
+      console.error("assignment_consolidation_blob_cleanup_failed", { assignmentId: state.assignment.id, error });
+    }
+  }
+  revalidatePath("/app");
+  return {
+    ok: true,
+    message: cleanupWarning
+      ? "La tarea quedó consolidada; algunos blobs pendientes se limpiarán de forma segura en el siguiente mantenimiento."
+      : `Tarea consolidada. Se liberaron aproximadamente ${(state.check.reclaimableBytes / 1024 / 1024).toFixed(2)} MB.`,
   };
 }
 

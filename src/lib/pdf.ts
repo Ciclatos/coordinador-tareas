@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, degrees, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import type { Allocation, Exercise, Member } from "./domain";
+import { pdfQualityProfiles, type PdfQualityProfile } from "./pdf-profiles";
 
 export type StoredPdfSource = {
   id: string;
@@ -9,6 +10,7 @@ export type StoredPdfSource = {
   rotation?: 0 | 90 | 180 | 270;
   selectedPages?: number[];
   pageCount?: number | null;
+  sizeBytes?: number;
   cropPercent?: number;
 };
 
@@ -47,9 +49,10 @@ export type AssignmentPdfData = {
     scores: Array<{ name: string; score: number; maxScore: number }>;
   }>;
   reportBody: string;
+  individualObservations?: Array<{ memberName: string; observation: string }>;
   files: File[];
   storedFiles?: StoredPdfSource[];
-  imageQuality?: "high" | "balanced" | "compact";
+  imageQuality?: PdfQualityProfile;
 };
 
 const letter: [number, number] = [612, 792];
@@ -145,16 +148,10 @@ async function sourceBytes(source: File | StoredPdfSource) {
   throw new Error(`No se pudo leer ${source.name} después de varios intentos.`);
 }
 
-const imageProfiles = {
-  high: { maxDimension: 2400, quality: 0.9 },
-  balanced: { maxDimension: 1800, quality: 0.78 },
-  compact: { maxDimension: 1200, quality: 0.62 },
-} as const;
-
 async function normalizeImage(
   bytes: Uint8Array,
   mimeType: string,
-  profileName: keyof typeof imageProfiles,
+  profileName: PdfQualityProfile,
   cropPercent = 0,
 ) {
   const bitmap = await createImageBitmap(
@@ -162,7 +159,7 @@ async function normalizeImage(
     { imageOrientation: "from-image" },
   );
   const canvas = document.createElement("canvas");
-  const profile = imageProfiles[profileName];
+  const profile = pdfQualityProfiles[profileName];
   const crop = Math.min(40, Math.max(0, cropPercent)) / 100;
   const sourceX = bitmap.width * crop;
   const sourceY = bitmap.height * crop;
@@ -175,15 +172,86 @@ async function normalizeImage(
   if (!context) throw new Error("No se pudo convertir la imagen WEBP.");
   context.drawImage(bitmap, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
   bitmap.close();
+  const transparent = mimeType === "image/png" && (() => {
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    for (let index = 3; index < pixels.length; index += 4)
+      if (pixels[index] < 255) return true;
+    return false;
+  })();
+  const outputType = transparent ? "image/png" : "image/jpeg";
   const blob = await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob(
       (value) =>
         value ? resolve(value) : reject(new Error("No se pudo convertir la imagen.")),
-      "image/jpeg",
-      profile.quality,
+      outputType,
+      profile.jpegQuality,
     ),
   );
-  return new Uint8Array(await blob.arrayBuffer());
+  return { bytes: new Uint8Array(await blob.arrayBuffer()), outputType };
+}
+
+async function rasterizedScannedPages(
+  bytes: Uint8Array,
+  indexes: number[],
+  profileName: PdfQualityProfile,
+) {
+  if (typeof document === "undefined") return new Map<number, Uint8Array>();
+  const pdfjs = await import("pdfjs-dist");
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+    "pdfjs-dist/build/pdf.worker.min.mjs",
+    import.meta.url,
+  ).toString();
+  // PDF.js transfiere el ArrayBuffer al worker; se entrega una copia para que
+  // pdf-lib pueda seguir usando los bytes originales como fallback vectorial.
+  const loadingTask = pdfjs.getDocument({ data: bytes.slice() });
+  const source = await loadingTask.promise;
+  const rendered = new Map<number, Uint8Array>();
+  try {
+    for (const index of indexes) {
+      const sourcePage = await source.getPage(index + 1);
+      const [text, operators] = await Promise.all([
+        sourcePage.getTextContent(),
+        sourcePage.getOperatorList(),
+      ]);
+      const textLength = text.items.reduce(
+        (total, item) => total + ("str" in item ? item.str.trim().length : 0),
+        0,
+      );
+      const imageOperations = operators.fnArray.filter((operation) =>
+        operation === pdfjs.OPS.paintImageXObject ||
+        operation === pdfjs.OPS.paintInlineImageXObject ||
+        operation === pdfjs.OPS.paintImageMaskXObject
+      ).length;
+      // Solo se rasterizan páginas que ya son escaneos. Un PDF con texto
+      // seleccionable o sin imágenes conserva sus recursos vectoriales.
+      if (textLength > 20 || imageOperations === 0) continue;
+      const profile = pdfQualityProfiles[profileName];
+      const baseViewport = sourcePage.getViewport({ scale: 1 });
+      const dpiScale = profile.targetDpi / 72;
+      const dimensionScale = profile.maxDimension / Math.max(baseViewport.width, baseViewport.height);
+      const viewport = sourcePage.getViewport({ scale: Math.min(dpiScale, dimensionScale) });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(viewport.width));
+      canvas.height = Math.max(1, Math.round(viewport.height));
+      const context = canvas.getContext("2d", { alpha: false });
+      if (!context) continue;
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      await sourcePage.render({ canvas, canvasContext: context, viewport }).promise;
+      const blob = await new Promise<Blob>((resolve, reject) =>
+        canvas.toBlob(
+          (value) => value ? resolve(value) : reject(new Error("No se pudo comprimir la página escaneada.")),
+          "image/jpeg",
+          profile.jpegQuality,
+        ),
+      );
+      rendered.set(index, new Uint8Array(await blob.arrayBuffer()));
+      sourcePage.cleanup();
+    }
+  } finally {
+    await loadingTask.destroy();
+  }
+  return rendered;
 }
 
 export async function createAssignmentPdf(data: AssignmentPdfData) {
@@ -366,6 +434,30 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
     if (!reportLines.length) reportIndex += 1;
   }
 
+  if (data.individualObservations?.length) {
+    let observationIndex = 0;
+    while (observationIndex < data.individualObservations.length) {
+      page = addAdminPage("OBSERVACIONES INDIVIDUALES", `Semana ${data.assignment.weekNumber} · Tarea ${data.assignment.number}`);
+      let y = 706;
+      page.drawRectangle({ x: 48, y: y - 34, width: 516, height: 34, color: green });
+      drawText(page, "INTEGRANTE", 58, y - 22, 8, fonts.bold, { color: rgb(1, 1, 1) });
+      drawText(page, "OBSERVACIÓN", 238, y - 22, 8, fonts.bold, { color: rgb(1, 1, 1) });
+      y -= 34;
+      while (observationIndex < data.individualObservations.length) {
+        const item = data.individualObservations[observationIndex];
+        const nameLines = wrap(item.memberName, fonts.bold, 8.5, 164);
+        const commentLines = wrap(item.observation, fonts.regular, 8.5, 310);
+        const height = Math.max(42, Math.max(nameLines.length, commentLines.length) * 12 + 16);
+        if (y - height < 56) break;
+        page.drawRectangle({ x: 48, y: y - height, width: 516, height, color: observationIndex % 2 ? rgb(0.965, 0.98, 0.97) : rgb(1, 1, 1), borderColor: border, borderWidth: 0.5 });
+        nameLines.forEach((line, index) => drawText(page, line, 58, y - 17 - index * 12, 8.5, fonts.bold));
+        commentLines.forEach((line, index) => drawText(page, line, 238, y - 17 - index * 12, 8.5, fonts.regular));
+        y -= height;
+        observationIndex += 1;
+      }
+    }
+  }
+
   // 4. Aspectos evaluables numéricos.
   const criteria = data.evaluations[0]?.scores ?? [];
   const criterionRows = Math.max(1, Math.ceil(criteria.length / 2));
@@ -499,12 +591,38 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
         ? requested.filter((index) => available.includes(index))
         : available;
       if (!indexes.length) throw new Error(`${file.name} no tiene páginas seleccionadas válidas.`);
-      const copied = await doc.copyPages(sourceDoc, indexes);
-      for (const copiedPage of copied) {
+      let scannedPages = new Map<number, Uint8Array>();
+      try {
+        scannedPages = await rasterizedScannedPages(
+          file.bytes,
+          indexes,
+          data.imageQuality ?? "balanced",
+        );
+      } catch (error) {
+        console.warn("pdf_scan_optimization_fallback", { name: file.name, error });
+      }
+      for (const index of indexes) {
+        const optimized = scannedPages.get(index);
+        if (optimized) {
+          const original = sourceDoc.getPage(index);
+          const jpeg = await doc.embedJpg(optimized);
+          const { width, height } = original.getSize();
+          const optimizedPage = doc.addPage([width, height]);
+          optimizedPage.drawImage(jpeg, {
+            x: 0,
+            y: 0,
+            width: optimizedPage.getWidth(),
+            height: optimizedPage.getHeight(),
+          });
+          if (!(source instanceof File) && source.rotation)
+            optimizedPage.setRotation(degrees(source.rotation));
+          pageNumber += 1;
+          copiedPageIndexes.add(doc.getPageCount() - 1);
+          continue;
+        }
+        const [copiedPage] = await doc.copyPages(sourceDoc, [index]);
         if (!(source instanceof File) && source.rotation)
-          copiedPage.setRotation(
-            degrees((copiedPage.getRotation().angle + source.rotation) % 360),
-          );
+          copiedPage.setRotation(degrees((copiedPage.getRotation().angle + source.rotation) % 360));
         doc.addPage(copiedPage);
         pageNumber += 1;
         copiedPageIndexes.add(doc.getPageCount() - 1);
@@ -512,13 +630,13 @@ export async function createAssignmentPdf(data: AssignmentPdfData) {
       continue;
     }
     const cropPercent = source instanceof File ? 0 : source.cropPercent ?? 0;
-    const needsNormalization = file.mimeType === "image/webp" || file.mimeType === "image/jpeg" || cropPercent > 0;
-    const imageBytes = needsNormalization
+    const needsNormalization = file.mimeType.startsWith("image/");
+    const normalized = needsNormalization
       ? await normalizeImage(file.bytes, file.mimeType, data.imageQuality ?? "balanced", cropPercent)
-      : file.bytes;
-    const image = needsNormalization
-      ? await doc.embedJpg(imageBytes)
-      : await doc.embedPng(imageBytes);
+      : { bytes: file.bytes, outputType: file.mimeType };
+    const image = normalized.outputType === "image/png"
+      ? await doc.embedPng(normalized.bytes)
+      : await doc.embedJpg(normalized.bytes);
     page = doc.addPage(letter);
     pageNumber += 1;
     const scale = Math.min(540 / image.width, 700 / image.height);

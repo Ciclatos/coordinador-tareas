@@ -40,6 +40,11 @@ export type StorageSnapshot = {
   missingReferenceCount: number;
   reclaimableQaBytes: number;
   reclaimableQaCount: number;
+  activeSubmissionFiles: number;
+  consolidatedSubmissionFiles: number;
+  reclaimableSubmissionBytes: number;
+  finalPdfBytes: number;
+  consolidationSavingsBytes: number;
   categories: StorageCategory[];
 };
 
@@ -142,6 +147,7 @@ async function inventory(): Promise<Inventory> {
       Math.max(latestBuild.get(build.assignmentId) ?? 0, build.version),
     );
   for (const file of files) {
+    if (!file.storageKey) continue;
     references.add(file.storageKey);
     categories.set(
       file.storageKey,
@@ -186,9 +192,25 @@ async function inventory(): Promise<Inventory> {
 }
 
 export async function getStorageSnapshot(): Promise<StorageSnapshot> {
-  const [{ blobs, categories, references }, submissionCount] = await Promise.all([
+  const [
+    { blobs, categories, references },
+    submissionCount,
+    activeFiles,
+    consolidatedFiles,
+    reclaimableFiles,
+    finalPdfAggregate,
+    consolidationAggregate,
+  ] = await Promise.all([
     inventory(),
     prisma.submission.count({ where: { versions: { some: { files: { some: {} } } } } }),
+    prisma.submissionFile.count({ where: { storageKey: { not: null } } }),
+    prisma.submissionFile.count({ where: { binaryDeletedAt: { not: null } } }),
+    prisma.submissionFile.aggregate({
+      where: { storageKey: { not: null }, version: { submission: { assignment: { status: "FINALIZED" } } } },
+      _sum: { sizeBytes: true },
+    }),
+    prisma.pdfBuild.aggregate({ where: { status: "READY", storageKey: { not: null } }, _sum: { sizeBytes: true } }),
+    prisma.assignment.aggregate({ _sum: { consolidatedBytes: true } }),
   ]);
   const result = new Map<StorageCategoryKey, StorageCategory>();
   for (const key of Object.keys(labels) as StorageCategoryKey[])
@@ -233,6 +255,11 @@ export async function getStorageSnapshot(): Promise<StorageSnapshot> {
     missingReferenceCount: [...references].filter((key) => !blobKeys.has(key)).length,
     reclaimableQaBytes: reclaimableQa.reduce((total, blob) => total + blob.size, 0),
     reclaimableQaCount: reclaimableQa.length,
+    activeSubmissionFiles: activeFiles,
+    consolidatedSubmissionFiles: consolidatedFiles,
+    reclaimableSubmissionBytes: reclaimableFiles._sum.sizeBytes ?? 0,
+    finalPdfBytes: finalPdfAggregate._sum.sizeBytes ?? 0,
+    consolidationSavingsBytes: consolidationAggregate._sum.consolidatedBytes ?? 0,
     categories: [...result.values()],
   };
 }
@@ -288,7 +315,9 @@ export async function cleanupQaTestAccounts(options?: { execute?: boolean }) {
       ...course.assignments.flatMap((assignment) => [
         ...assignment.pdfBuilds.flatMap((build) => build.storageKey ? [build.storageKey] : []),
         ...assignment.submissions.flatMap((submission) =>
-          submission.versions.flatMap((version) => version.files.map((file) => file.storageKey)),
+          submission.versions.flatMap((version) =>
+            version.files.flatMap((file) => file.storageKey ? [file.storageKey] : []),
+          ),
         ),
       ]),
     ]),

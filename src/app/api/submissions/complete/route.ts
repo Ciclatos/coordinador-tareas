@@ -43,6 +43,7 @@ export async function POST(request: Request) {
     },
     select: {
       id: true,
+      status: true,
       dueAt: true,
       exclusions: { where: { memberId }, select: { id: true } },
       sections: { select: { exercises: { select: { id: true } } } },
@@ -50,6 +51,8 @@ export async function POST(request: Request) {
   });
   if (!assignment)
     return NextResponse.json({ error: "No tienes acceso a esta tarea." }, { status: 403 });
+  if (["FINALIZED", "CONSOLIDATED", "ARCHIVED"].includes(assignment.status))
+    return NextResponse.json({ error: "La tarea ya no admite nuevas entregas." }, { status: 409 });
   if (assignment.exclusions.length)
     return NextResponse.json(
       { error: "Este integrante está excluido temporalmente de la tarea." },

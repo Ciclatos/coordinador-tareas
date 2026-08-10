@@ -32,6 +32,7 @@ import {
   type DistributionMode,
 } from "@/lib/domain";
 import { createAssignmentPdf, type StoredPdfSource } from "@/lib/pdf";
+import { estimatePdfBytes, reductionPercent } from "@/lib/pdf-profiles";
 import { isPdfBuildStale, resolveActiveAssignment } from "@/lib/active-assignment";
 import { logout } from "@/app/(auth)/actions";
 import type { DashboardData } from "@/data/dashboard";
@@ -55,6 +56,9 @@ import {
   saveWeeklyReport,
   setActiveAssignment,
   getFreshPdfContent,
+  getConsolidationSummary,
+  finalizeAssignment,
+  consolidateAssignment,
   setAssignmentArchived,
   setCourseActive,
   setMemberActive,
@@ -323,7 +327,7 @@ export default function AppShell({
   const storedPdfFiles: StoredPdfSource[] =
     currentAssignment?.submissions.flatMap((submission) =>
       submission.versions.flatMap((version) =>
-        version.files.map((file) => ({
+        version.files.filter((file) => file.binaryAvailable).map((file) => ({
           id: file.id,
           name: file.originalName,
           mimeType: file.mimeType,
@@ -338,6 +342,7 @@ export default function AppShell({
             (preference) => preference.fileId === file.id,
           )?.cropPercent,
           pageCount: file.pageCount,
+          sizeBytes: file.sizeBytes,
         })),
       ),
     ) ?? [];
@@ -503,6 +508,7 @@ export default function AppShell({
           : allocations,
         evaluations: freshContent.evaluations,
         reportBody: freshContent.reportBody ?? reportBody,
+        individualObservations: freshContent.individualObservations,
         files: [],
         storedFiles: orderedStoredPdfFiles,
         imageQuality,
@@ -528,6 +534,11 @@ export default function AppShell({
           uploadId,
           pathname: stored.pathname,
           contentSnapshotAt: freshContent.contentUpdatedAt,
+          qualityProfile: imageQuality,
+          sourceBytes: orderedStoredPdfFiles.reduce(
+            (total, file) => total + (file.sizeBytes ?? 0),
+            0,
+          ),
           items: [
             "COVER",
             "DISTRIBUTION",
@@ -812,6 +823,15 @@ export default function AppShell({
               builds={currentAssignment?.pdfBuilds ?? []}
               contentUpdatedAt={currentAssignment?.contentUpdatedAt}
               assignmentLabel={currentAssignment ? `Tarea ${currentAssignment.number}` : "Tarea"}
+              assignmentNumber={currentAssignment?.number}
+              assignmentStatus={currentAssignment?.status}
+              reportSourceSnapshotAt={currentAssignment?.reports[0]?.sourceSnapshotAt}
+              reportManuallyEdited={currentAssignment?.reports[0]?.manuallyEdited ?? false}
+              reportIncludeIndividualComments={currentAssignment?.reports[0]?.includeIndividualComments ?? false}
+              evaluationUpdatedAt={currentAssignment?.evaluations.reduce<string | null>(
+                (latest, evaluation) => !latest || evaluation.updatedAt > latest ? evaluation.updatedAt : latest,
+                null,
+              )}
             />
           )}{" "}
           {view === "Configuración" && <SettingsView user={currentUser} />}
@@ -1437,7 +1457,7 @@ function Tasks({
               {String(assignment.number).padStart(2, "0")}
             </div>
             <div>
-              <span className="status">{assignment.status}</span>
+              <span className="status">{{ DRAFT: "Borrador", DISTRIBUTED: "Distribuida", RECEIVING: "Recibiendo", REVIEW: "En revisión", FINALIZED: "Finalizada", CONSOLIDATED: "Consolidada", ARCHIVED: "Archivada" }[assignment.status] ?? assignment.status}</span>
               <h3>
                 {assignment.courseName} · {assignment.title}
               </h3>
@@ -2927,16 +2947,14 @@ function Submissions({ courses, activeAssignmentId }: { courses: DashboardData; 
                       {submission.late ? "Entrega tardía" : "Entregado"}
                     </small>
                   </span>
-                  <a
-                    className="outline"
-                    href={`/api/files/${file.id}`}
-                    target="_blank"
-                  >
-                    Ver
-                  </a>
-                  <button onClick={() => removeStored(file.id)}>
-                    Eliminar
-                  </button>
+                  {file.binaryAvailable ? (
+                    <>
+                      <a className="outline" href={`/api/files/${file.id}`} target="_blank">Ver</a>
+                      <button onClick={() => removeStored(file.id)}>Eliminar</button>
+                    </>
+                  ) : (
+                    <span className="consolidated-file-note">Esta entrega fue consolidada en el PDF final.</span>
+                  )}
                 </div>
               )),
             ),
@@ -3012,6 +3030,13 @@ function Evaluation({ courses, activeAssignmentId }: { courses: DashboardData; a
         )?.comments ?? "",
       ]),
     ) as Record<string, string>;
+  const makeCommentVisibility = (item: (typeof assignments)[number] | undefined) =>
+    Object.fromEntries(
+      (item?.members ?? []).map((member) => [
+        member.id,
+        item?.evaluations.find((evaluation) => evaluation.memberId === member.id)?.includeCommentsInReport ?? true,
+      ]),
+    ) as Record<string, boolean>;
   const [scores, setScores] = useState<Record<string, number[]>>(() =>
     makeScores(assignments.find((item) => item.id === activeAssignmentId) ?? assignments[0]),
   );
@@ -3020,6 +3045,9 @@ function Evaluation({ courses, activeAssignmentId }: { courses: DashboardData; a
   );
   const [comments, setComments] = useState<Record<string, string>>(() =>
     makeComments(assignments.find((item) => item.id === activeAssignmentId) ?? assignments[0]),
+  );
+  const [commentVisibility, setCommentVisibility] = useState<Record<string, boolean>>(() =>
+    makeCommentVisibility(assignments.find((item) => item.id === activeAssignmentId) ?? assignments[0]),
   );
   const [message, setMessage] = useState("");
   const [saving, startSaving] = useTransition();
@@ -3096,6 +3124,7 @@ function Evaluation({ courses, activeAssignmentId }: { courses: DashboardData; a
     setScores(makeScores(assignment));
     setReasons(makeReasons(assignment));
     setComments(makeComments(assignment));
+    setCommentVisibility(makeCommentVisibility(assignment));
     setMessage("Se restauraron los últimos valores guardados.");
   };
   useEffect(() => {
@@ -3129,6 +3158,7 @@ function Evaluation({ courses, activeAssignmentId }: { courses: DashboardData; a
             scores: scores[member.id] ?? criteria.map((item) => item.maxScore),
             reasons: reasons[member.id] ?? criteria.map(() => ""),
             comments: comments[member.id] ?? "",
+            includeCommentsInReport: commentVisibility[member.id] ?? true,
           })),
         });
         if (sequence === evaluationSequence.current) {
@@ -3138,7 +3168,7 @@ function Evaluation({ courses, activeAssignmentId }: { courses: DashboardData; a
       });
     }, 700);
     return () => window.clearTimeout(timer);
-  }, [assignment, comments, criteria, reasons, router, scores]);
+  }, [assignment, comments, commentVisibility, criteria, reasons, router, scores]);
   return (
     <>
       <Title eyebrow="Revisión rápida" title="Evaluación del grupo">
@@ -3171,6 +3201,7 @@ function Evaluation({ courses, activeAssignmentId }: { courses: DashboardData; a
               setScores(makeScores(next));
               setReasons(makeReasons(next));
               setComments(makeComments(next));
+              setCommentVisibility(makeCommentVisibility(next));
               setTemplateName(next?.templateName ?? "Evaluación semanal");
               setTemplateCriteria(
                 (next?.templateCriteria ?? DEFAULT_EVALUATION_CRITERIA).map(
@@ -3407,6 +3438,14 @@ function Evaluation({ courses, activeAssignmentId }: { courses: DashboardData; a
                       }))
                     }
                   />
+                  <label className="evaluation-report-visibility">
+                    <input
+                      type="checkbox"
+                      checked={commentVisibility[m.id] ?? true}
+                      onChange={(event) => setCommentVisibility((current) => ({ ...current, [m.id]: event.target.checked }))}
+                    />
+                    Incluir esta observación en el reporte
+                  </label>
                 </td>
                 <td>
                   <button
@@ -3447,6 +3486,12 @@ function PdfBuilder({
   builds,
   contentUpdatedAt,
   assignmentLabel,
+  assignmentNumber,
+  assignmentStatus,
+  reportSourceSnapshotAt,
+  reportManuallyEdited,
+  reportIncludeIndividualComments,
+  evaluationUpdatedAt,
 }: {
   storedFiles: StoredPdfSource[];
   download: () => void;
@@ -3472,15 +3517,31 @@ function PdfBuilder({
     sizeBytes: number | null;
     createdAt: string;
     contentSnapshotAt: string | null;
+    qualityProfile: string;
+    sourceBytes: number | null;
   }>;
   contentUpdatedAt?: string;
   assignmentLabel: string;
+  assignmentNumber?: number;
+  assignmentStatus?: string;
+  reportSourceSnapshotAt?: string | null;
+  reportManuallyEdited: boolean;
+  reportIncludeIndividualComments: boolean;
+  evaluationUpdatedAt?: string | null;
 }) {
   const [savingReport, startSavingReport] = useTransition();
   const [savingConfiguration, startSavingConfiguration] = useTransition();
   const [reportMessage, setReportMessage] = useState("");
   const [configurationMessage, setConfigurationMessage] = useState("");
+  const [includeIndividualComments, setIncludeIndividualComments] = useState(reportIncludeIndividualComments);
+  const includeIndividualCommentsRef = useRef(reportIncludeIndividualComments);
+  const [consolidation, setConsolidation] = useState<Awaited<ReturnType<typeof getConsolidationSummary>> | null>(null);
+  const [consolidationMessage, setConsolidationMessage] = useState("");
+  const [consolidationConfirmation, setConsolidationConfirmation] = useState("");
+  const [autoConsolidateDays, setAutoConsolidateDays] = useState<number | null>(null);
+  const [consolidationPending, startConsolidation] = useTransition();
   const reportMounted = useRef(false);
+  const generatedReportUpdate = useRef(false);
   const [pageInputs, setPageInputs] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       storedFiles.map((file) => [
@@ -3506,10 +3567,14 @@ function PdfBuilder({
       reportMounted.current = true;
       return;
     }
+    if (generatedReportUpdate.current) {
+      generatedReportUpdate.current = false;
+      return;
+    }
     setReportMessage("Guardando…");
     const timer = window.setTimeout(() => {
       startSavingReport(async () => {
-        const result = await saveWeeklyReport({ assignmentId, body: reportBody });
+        const result = await saveWeeklyReport({ assignmentId, body: reportBody, includeIndividualComments: includeIndividualCommentsRef.current });
         setReportMessage(result.ok ? "Guardado ✓" : `${result.message} — Reintentar`);
       });
     }, 800);
@@ -3517,6 +3582,20 @@ function PdfBuilder({
   }, [assignmentId, reportBody]);
   const latestBuild = builds[0];
   const pdfIsStale = isPdfBuildStale(contentUpdatedAt, latestBuild);
+  const sourceBytes = storedFiles.reduce((total, file) => total + (file.sizeBytes ?? 0), 0);
+  const estimatedBytes = estimatePdfBytes(sourceBytes, imageQuality);
+  const reportNeedsRefresh = Boolean(
+    reportManuallyEdited &&
+    reportSourceSnapshotAt &&
+    evaluationUpdatedAt &&
+    new Date(evaluationUpdatedAt) > new Date(reportSourceSnapshotAt),
+  );
+  const consolidated = assignmentStatus === "CONSOLIDATED" || (consolidation?.ok && consolidation.status === "CONSOLIDATED");
+  const refreshConsolidation = () => assignmentId && startConsolidation(async () => {
+    const result = await getConsolidationSummary(assignmentId);
+    setConsolidation(result);
+    if (result.ok) setAutoConsolidateDays(result.autoConsolidateDays);
+  });
   return (
     <>
       <Title eyebrow="Constructor final" title={`Generar PDF — ${assignmentLabel}`}>
@@ -3524,12 +3603,17 @@ function PdfBuilder({
           className="primary"
           data-tutorial="generate-pdf"
           onClick={download}
-          disabled={!assignmentId || generating}
+          disabled={!assignmentId || generating || consolidated}
         >
           <FileDown size={17} />{" "}
           {generating ? "Generando PDF…" : "Generar y descargar"}
         </button>
       </Title>
+      {consolidated && (
+        <div className="notice warning" role="status">
+          <strong>Tarea consolidada.</strong> El PDF final se conserva, pero las entregas originales ya no están disponibles para reconstruirlo.
+        </div>
+      )}
       {pdfIsStale && (
         <div className="notice warning pdf-stale" role="status">
           <strong>PDF desactualizado.</strong> Hay cambios posteriores a la última generación.
@@ -3550,6 +3634,22 @@ function PdfBuilder({
           onChange={(event) => setReportBody(event.target.value)}
           rows={7}
         />
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={includeIndividualComments}
+            onChange={(event) => {
+              includeIndividualCommentsRef.current = event.target.checked;
+              setIncludeIndividualComments(event.target.checked);
+            }}
+          />
+          Incluir observaciones individuales en el reporte
+        </label>
+        {reportNeedsRefresh && (
+          <p className="notice warning">
+            Las evaluaciones cambiaron después de editar el reporte. Usa “Actualizar reporte con nuevos datos” si deseas incorporar los cambios.
+          </p>
+        )}
         <div className="title-actions">
           <button
             className="outline"
@@ -3557,19 +3657,80 @@ function PdfBuilder({
             onClick={() =>
               assignmentId &&
               startSavingReport(async () => {
-                const result = await saveWeeklyReport({ assignmentId });
-                if (result.body) setReportBody(result.body);
+                const result = await saveWeeklyReport({ assignmentId, includeIndividualComments });
+                if (result.body) {
+                  generatedReportUpdate.current = true;
+                  setReportBody(result.body);
+                }
                 setReportMessage(result.message);
               })
             }
           >
-            Generar desde datos actuales
+            {reportNeedsRefresh ? "Actualizar reporte con nuevos datos" : "Generar desde datos actuales"}
           </button>
           <span className="save-status" aria-live="polite">
             {savingReport ? "Guardando…" : reportMessage || "Guardado ✓"}
           </span>
         </div>
         {reportMessage && <p className="notice">{reportMessage}</p>}
+      </div>
+      <div className="panel consolidation-panel">
+        <div className="panel-head">
+          <div>
+            <h3>Finalización y almacenamiento</h3>
+            <p>Generar un PDF no elimina archivos. Finalizar y liberar almacenamiento son dos acciones separadas.</p>
+          </div>
+          <button className="outline" onClick={refreshConsolidation} disabled={!assignmentId || consolidationPending}>
+            {consolidationPending ? "Comprobando…" : "Comprobar requisitos"}
+          </button>
+        </div>
+        {consolidation?.ok && (
+          <>
+            <p>
+              {consolidation.fileCount} archivos individuales · {(consolidation.reclaimableBytes / 1024 / 1024).toFixed(2)} MB recuperables · {consolidation.historicalFileCount} versiones históricas.
+            </p>
+            {consolidation.reasons.length > 0 && (
+              <ul>{consolidation.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+            )}
+            {consolidation.status !== "FINALIZED" && consolidation.status !== "CONSOLIDATED" && (
+              <div className="consolidation-action">
+                <label>
+                  Eliminación automática después de finalizar
+                  <select value={autoConsolidateDays ?? ""} onChange={(event) => setAutoConsolidateDays(event.target.value ? Number(event.target.value) : null)}>
+                    <option value="">Nunca</option><option value="7">7 días</option><option value="14">14 días</option><option value="30">30 días</option>
+                  </select>
+                </label>
+                <button className="primary" disabled={!consolidation.eligible || consolidationPending} onClick={() => assignmentId && startConsolidation(async () => {
+                  const result = await finalizeAssignment({ assignmentId, autoConsolidateDays });
+                  setConsolidationMessage(result.message);
+                  if (result.ok) {
+                    const next = await getConsolidationSummary(assignmentId);
+                    setConsolidation(next);
+                  }
+                })}>Finalizar tarea</button>
+              </div>
+            )}
+            {consolidation.status === "FINALIZED" && (
+              <div className="consolidation-action danger-zone">
+                <p><strong>Liberar almacenamiento</strong><br />El PDF final y todos los metadatos se conservarán. Esta acción elimina los binarios individuales y no permite reconstruir el documento sin volver a cargarlos.</p>
+                <label>
+                  Escriba <b>LIBERAR TAREA {assignmentNumber}</b> para confirmar
+                  <input value={consolidationConfirmation} onChange={(event) => setConsolidationConfirmation(event.target.value)} />
+                </label>
+                <button className="danger" disabled={!consolidation.eligible || consolidationPending || consolidationConfirmation.trim().toUpperCase() !== `LIBERAR TAREA ${assignmentNumber}`} onClick={() => assignmentId && startConsolidation(async () => {
+                  const result = await consolidateAssignment({ assignmentId, confirmation: consolidationConfirmation });
+                  setConsolidationMessage(result.message);
+                  if (result.ok) {
+                    setConsolidationConfirmation("");
+                    const next = await getConsolidationSummary(assignmentId);
+                    setConsolidation(next);
+                  }
+                })}>Liberar almacenamiento</button>
+              </div>
+            )}
+          </>
+        )}
+        {consolidationMessage && <p className="notice" role="status">{consolidationMessage}</p>}
       </div>
       <div className="panel">
         <h3>Versiones finales guardadas</h3>
@@ -3590,6 +3751,10 @@ function PdfBuilder({
                     {build.sizeBytes
                       ? `${(build.sizeBytes / 1024 / 1024).toFixed(2)} MB`
                       : "Tamaño no disponible"}
+                    {build.sizeBytes && build.sourceBytes
+                      ? ` · Reducción ${reductionPercent(build.sourceBytes, build.sizeBytes)} %`
+                      : ""}
+                    {` · ${build.qualityProfile === "high" ? "Alta" : build.qualityProfile === "compact" ? "Compacta" : "Equilibrada"}`}
                   </small>
                 </span>
                 <a className="outline" href={`/api/pdf-builds/${build.id}`}>
@@ -3609,19 +3774,22 @@ function PdfBuilder({
                 Arrastra entregas para ordenarlas, rota su contenido y elige
                 páginas con rangos como 1-3,5.
               </p>
+              <p className="pdf-size-estimate">
+                PDF estimado: <strong>~{(estimatedBytes / 1024 / 1024).toFixed(1)} MB</strong>
+              </p>
             </div>
             <div className="quality-actions">
               <label>
-                Calidad de imágenes
+                Calidad del PDF
                 <select
                   value={imageQuality}
                   onChange={(event) =>
                     setImageQuality(event.target.value as ImageQuality)
                   }
                 >
-                  <option value="high">Alta - 2400 px / 90%</option>
-                  <option value="balanced">Equilibrada - 1800 px / 78%</option>
-                  <option value="compact">Compacta - 1200 px / 62%</option>
+                  <option value="high">Alta - archivo y máxima legibilidad</option>
+                  <option value="balanced">Equilibrada - recomendada</option>
+                  <option value="compact">Compacta - límites de plataforma</option>
                 </select>
               </label>
               <button

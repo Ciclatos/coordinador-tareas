@@ -121,6 +121,18 @@ describe("seguridad del portal público", () => {
     expect(portalState(input, new Date("2026-08-10T12:00:00Z"))).toBe(expected);
   });
 
+  it.each(["FINALIZED", "CONSOLIDATED", "ARCHIVED"])(
+    "cierra el portal cuando la tarea está %s",
+    (assignmentStatus) => {
+      expect(portalState({
+        enabled: true,
+        dueAt: "2026-08-12T13:00:00Z",
+        allowLateSubmissions: true,
+        assignmentStatus,
+      }, new Date("2026-08-10T12:00:00Z"))).toBe("CLOSED");
+    },
+  );
+
   it("aplica esperas progresivas después de intentos fallidos", () => {
     expect(rateLimitDelay(4)).toBe(0);
     expect(rateLimitDelay(5)).toBe(5 * 60 * 1000);

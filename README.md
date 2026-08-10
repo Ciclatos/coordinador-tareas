@@ -2,7 +2,7 @@
 
 ## Administración de almacenamiento
 
-La sección **Configuración > Almacenamiento** consulta el inventario privado de Vercel Blob y lo cruza con PostgreSQL. Muestra uso total, entregas vigentes, versiones históricas, PDF finales, archivos QA, temporales, duplicados y huérfanos. Las limpiezas globales requieren autorización administrativa y la frase `LIMPIAR ALMACENAMIENTO`; nunca incluyen archivos con referencias vigentes.
+La sección **Configuración > Almacenamiento** consulta el inventario privado de Vercel Blob y lo cruza con PostgreSQL. Muestra uso total, entregas vigentes y consolidadas, archivos eliminables, ahorro acumulado, versiones históricas, PDF finales, archivos QA, temporales, duplicados y huérfanos. Las limpiezas globales requieren autorización administrativa y la frase `LIMPIAR ALMACENAMIENTO`; nunca incluyen archivos con referencias vigentes.
 
 Comandos operativos:
 
@@ -20,6 +20,8 @@ Variables:
 - `CRON_SECRET`: protege `/api/cron/storage-gc`, ejecutado diariamente por Vercel Cron.
 
 El recolector aplica una gracia de 24 horas y solo elimina blobs sin referencia en `SubmissionFile`, `PdfBuild` o `CoverTemplate`. Los errores de capacidad se registran en servidor y se traducen a un mensaje seguro para estudiantes. Véase [la auditoría de producción](docs/storage-audit-2026-08-09.md).
+
+Cada tarea ofrece un flujo separado de **Finalizar tarea** y **Liberar almacenamiento**. Finalizar exige un PDF vigente, ninguna entrega pendiente o en corrección y cobertura de todos los archivos actuales. Liberar requiere una segunda confirmación escrita; elimina únicamente binarios individuales y conserva metadatos, SHA-256, páginas, fechas, puntualidad, notas, comentarios y versiones finales. Después la tarea queda **Consolidada** y no puede reconstruir el PDF sin volver a cargar las fuentes. La eliminación automática es opcional (7, 14 o 30 días) y su valor predeterminado es **Nunca**.
 
 Aplicación web en español para coordinar tareas grupales universitarias: define secciones y ejercicios, distribuye la carga considerando el historial, recibe archivos, registra evaluaciones y compila un PDF final tamaño carta.
 
@@ -40,8 +42,8 @@ Aplicación web en español para coordinar tareas grupales universitarias: defin
 - Exportación PNG diseñada para WhatsApp: resumen vertical paginado, tarjetas individuales y matriz clásica; incluye vista previa responsive, nombres completos o cortos, color, fecha, instrucciones, totales, pesos, descarga robusta, copia, Web Share con fallback y ZIP de tarjetas.
 - Entregas PDF, JPG, PNG y WEBP en Vercel Blob privado, con validación binaria, SHA-256, versiones y acceso autenticado.
 - Evaluación rápida con rúbricas configurables por curso, máximos dinámicos, motivos de reducción, comentarios y plantillas versionadas.
-- Reporte determinista persistido, regenerable desde datos actuales y editable, sin depender de una API de IA.
-- PDF final mediante `pdf-lib`: portada, desempeño, evaluación detallada, resumen, carátula con logo, integrantes, entregas y numeración. Incluye miniaturas PDF.js, selección de páginas, rotación, recorte de imágenes, drag and drop, compresión y versiones privadas descargables.
+- Reporte determinista persistido, regenerable desde datos actuales y editable, sin depender de una API de IA. Resume comentarios académicos por presentación, puntualidad, procedimiento, legibilidad y correcciones; las observaciones individuales son opcionales y respetan su marca de privacidad.
+- PDF final mediante `pdf-lib`: portada, desempeño, evaluación detallada, resumen, carátula con logo, integrantes, entregas y numeración. Incluye miniaturas PDF.js, selección de páginas, rotación, recorte de imágenes, drag and drop, perfiles Alta/Equilibrada/Compacta, estimación de tamaño y versiones privadas descargables.
 - Autenticación por correo y contraseña, sesiones firmadas y persistencia multiusuario en Lakebase Postgres (Neon) mediante Prisma.
 - Onboarding guiado en español con tutorial general, recorridos contextuales por módulo, centro de ayuda, repetición y progreso sincronizado entre dispositivos.
 
@@ -81,6 +83,8 @@ npm run pdf:inspect-reference
 ```
 
 El PDF final sigue el orden: portada del reporte, desempeño y evaluación, carátula, integrantes, desarrollo y anexos.
+
+Los PDF con texto o fórmulas vectoriales se copian sin rasterización. PDF.js detecta páginas que ya son escaneos sin texto seleccionable y únicamente esas páginas se recomprimen según el perfil elegido: **Alta** (200 DPI objetivo, 90 %), **Equilibrada** (165 DPI, 78 %, predeterminada) y **Compacta** (120 DPI, 62 %). Véase [la auditoría y política de consolidación](docs/pdf-storage-optimization-2026-08-10.md).
 
 La validación reproducible genera un documento carta de 31 páginas con seis integrantes, una entrega PDF de 24 páginas y una imagen; después renderiza todas las páginas y comprueba estructura, tamaño y encabezados:
 
@@ -150,7 +154,7 @@ Configura en Vercel `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `AUTH_SECRET` y la 
 
 ## Limitaciones conocidas
 
-La compilación se realiza en el navegador para evitar los límites de memoria de funciones serverless y admite hasta 250 MB por PDF final. El recorte de imágenes es uniforme por borde; no incluye todavía un marco gráfico de recorte libre. El comprobante del portal se puede copiar; no genera un PDF independiente.
+La compilación se realiza en el navegador para evitar los límites de memoria de funciones serverless y admite hasta 250 MB por PDF final. La estimación previa es orientativa; la reducción exacta se muestra después de generar. Los PDF vectoriales que ya llegan internamente optimizados no se reescriben. Una tarea consolidada necesita volver a cargar sus fuentes para reconstruirse. El recorte de imágenes es uniforme por borde; no incluye todavía un marco gráfico de recorte libre. El comprobante del portal se puede copiar; no genera un PDF independiente.
 
 ## Próximas mejoras
 

@@ -32,6 +32,11 @@ export async function GET(
   const file = await authorizedFile(fileId, session.userId);
   if (!file)
     return NextResponse.json({ error: "Archivo no encontrado." }, { status: 404 });
+  if (!file.storageKey)
+    return NextResponse.json(
+      { error: "Esta entrega fue consolidada en el PDF final." },
+      { status: 410 },
+    );
   const blob = await get(file.storageKey, { access: "private" });
   if (!blob || blob.statusCode !== 200)
     return NextResponse.json({ error: "Archivo no disponible." }, { status: 404 });
@@ -57,7 +62,7 @@ export async function DELETE(
   const file = await authorizedFile(fileId, session.userId);
   if (!file)
     return NextResponse.json({ error: "Archivo no encontrado." }, { status: 404 });
-  await del(file.storageKey);
+  if (file.storageKey) await del(file.storageKey);
   await prisma.submissionFile.delete({ where: { id: file.id } });
   return NextResponse.json({ ok: true });
 }

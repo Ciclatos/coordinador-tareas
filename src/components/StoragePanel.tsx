@@ -75,6 +75,13 @@ export default function StoragePanel() {
               </article>
             ))}
           </div>
+          <div className="storage-consolidation-metrics">
+            <article><span>Entregas activas</span><strong>{snapshot.activeSubmissionFiles}</strong></article>
+            <article><span>Entregas consolidadas</span><strong>{snapshot.consolidatedSubmissionFiles}</strong></article>
+            <article><span>Archivos eliminables</span><strong>{format(snapshot.reclaimableSubmissionBytes)}</strong></article>
+            <article><span>PDF finales</span><strong>{format(snapshot.finalPdfBytes)}</strong></article>
+            <article><span>Ahorro por consolidación</span><strong>{format(snapshot.consolidationSavingsBytes)}</strong></article>
+          </div>
           <p className="storage-note">
             <ShieldAlert size={16} /> Se detectaron {snapshot.duplicateGroups} grupos duplicados
             ({format(snapshot.duplicateBytes)} en copias) y {snapshot.missingReferenceCount} referencias sin blob.

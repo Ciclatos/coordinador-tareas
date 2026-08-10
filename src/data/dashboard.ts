@@ -67,6 +67,10 @@ export async function getDashboardData(userId: string) {
           pdfOrder: true,
           updatedAt: true,
           contentUpdatedAt: true,
+          finalizedAt: true,
+          consolidatedAt: true,
+          autoConsolidateDays: true,
+          consolidatedBytes: true,
           submissionPortal: {
             select: {
               id: true,
@@ -136,6 +140,7 @@ export async function getDashboardData(userId: string) {
                       rotation: true,
                       pageCount: true,
                       exerciseId: true,
+                      binaryDeletedAt: true,
                     },
                   },
                 },
@@ -147,6 +152,7 @@ export async function getDashboardData(userId: string) {
               memberId: true,
               total: true,
               comments: true,
+              includeCommentsInReport: true,
               updatedAt: true,
               scores: {
                 select: {
@@ -168,6 +174,10 @@ export async function getDashboardData(userId: string) {
               body: true,
               generatorVersion: true,
               createdAt: true,
+              updatedAt: true,
+              sourceSnapshotAt: true,
+              manuallyEdited: true,
+              includeIndividualComments: true,
             },
           },
           pdfBuilds: {
@@ -180,6 +190,8 @@ export async function getDashboardData(userId: string) {
               sizeBytes: true,
               createdAt: true,
               contentSnapshotAt: true,
+              qualityProfile: true,
+              sourceBytes: true,
             },
           },
           _count: { select: { sections: true, submissions: true } },
@@ -197,11 +209,15 @@ export async function getDashboardData(userId: string) {
       dueAt: assignment.dueAt.toISOString(),
       updatedAt: assignment.updatedAt.toISOString(),
       contentUpdatedAt: assignment.contentUpdatedAt.toISOString(),
+      finalizedAt: assignment.finalizedAt?.toISOString() ?? null,
+      consolidatedAt: assignment.consolidatedAt?.toISOString() ?? null,
       weekStart: assignment.weekStart.toISOString(),
       weekEnd: assignment.weekEnd.toISOString(),
       reports: assignment.reports.map((report) => ({
         ...report,
         createdAt: report.createdAt.toISOString(),
+        updatedAt: report.updatedAt.toISOString(),
+        sourceSnapshotAt: report.sourceSnapshotAt?.toISOString() ?? null,
       })),
       pdfBuilds: assignment.pdfBuilds.map((build) => ({
         ...build,
@@ -226,6 +242,10 @@ export async function getDashboardData(userId: string) {
         versions: submission.versions.map((version) => ({
           ...version,
           createdAt: version.createdAt.toISOString(),
+          files: version.files.map(({ binaryDeletedAt, ...file }) => ({
+            ...file,
+            binaryAvailable: !binaryDeletedAt,
+          })),
         })),
       })),
     })),

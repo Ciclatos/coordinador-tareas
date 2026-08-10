@@ -103,7 +103,8 @@ export function portalState(
   now = new Date(),
 ): PortalState {
   if (!input.enabled) return "DISABLED";
-  if (input.assignmentStatus === "ARCHIVED") return "CLOSED";
+  if (["FINALIZED", "CONSOLIDATED", "ARCHIVED"].includes(input.assignmentStatus ?? ""))
+    return "CLOSED";
   if (input.opensAt && now < new Date(input.opensAt)) return "UPCOMING";
   const closesAt = input.closesAt
     ? new Date(input.closesAt)

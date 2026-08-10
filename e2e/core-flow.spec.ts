@@ -21,7 +21,7 @@ test.afterAll(async () => {
   });
   const storageKeys = stored.flatMap((course) => course.assignments.flatMap((assignment) => [
     ...assignment.pdfBuilds.flatMap((build) => build.storageKey ? [build.storageKey] : []),
-    ...assignment.submissions.flatMap((submission) => submission.versions.flatMap((version) => version.files.map((file) => file.storageKey))),
+    ...assignment.submissions.flatMap((submission) => submission.versions.flatMap((version) => version.files.flatMap((file) => file.storageKey ? [file.storageKey] : []))),
   ]));
   await deleteBlobKeysWithRetry(storageKeys);
   await prisma.$transaction([
@@ -232,8 +232,10 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   const fixtureFiles = await Promise.all([1, 2].map(async (number) => {
     const fixture = await PDFDocument.create();
     const page = fixture.addPage([612, 792]);
-    const width = 2100;
-    const height = 2100;
+    // Suficiente para comprobar recompressión sin convertir el E2E en una
+    // prueba de estrés de red contra Blob.
+    const width = 1400;
+    const height = 1400;
     const noise = randomBytes(width * height * 3);
     const png = await sharp(noise, { raw: { width, height, channels: 3 } })
       .png({ compressionLevel: 0 })
@@ -274,9 +276,41 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   for await (const chunk of finalStream) finalChunks.push(Buffer.from(chunk));
   const finalBytes = Buffer.concat(finalChunks);
   expect(finalBytes.subarray(0, 5).toString()).toBe("%PDF-");
-  expect(finalBytes.byteLength).toBeGreaterThan(25 * 1024 * 1024);
+  // El fixture contiene escaneos deliberadamente grandes: el perfil
+  // equilibrado debe mantener un PDF sustancial, pero ya no superar 25 MiB.
+  expect(finalBytes.byteLength).toBeGreaterThan(256 * 1024);
+  expect(finalBytes.byteLength).toBeLessThan(25 * 1024 * 1024);
   await expect(page.getByText(/PDF final generado y guardado como versión 1/)).toBeVisible({ timeout: 60_000 });
   await page.reload();
   await page.getByRole("navigation").getByRole("button", { name: "PDF final", exact: true }).click();
   await expect(page.getByText("Versión 1", { exact: true })).toBeVisible();
+  const staleWarning = page.getByText("PDF desactualizado.", { exact: true });
+  if (await staleWarning.isVisible()) {
+    const refreshedDownload = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Generar nueva versión" }).click();
+    await refreshedDownload;
+    await expect(page.getByText(/PDF final generado y guardado como versión 2/)).toBeVisible({ timeout: 60_000 });
+  }
+  await page.getByRole("button", { name: "Comprobar requisitos" }).click();
+  await expect(page.getByText(/2 archivos individuales/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Finalizar tarea" })).toBeEnabled({ timeout: 30_000 });
+  await page.getByRole("button", { name: "Finalizar tarea" }).click();
+  await expect(page.getByText(/Tarea finalizada\. Los archivos aún se conservan/)).toBeVisible();
+  await page.locator(".consolidation-panel input").fill("LIBERAR TAREA 1");
+  await page.getByRole("button", { name: "Liberar almacenamiento" }).click();
+  await expect(page.getByText(/Tarea consolidada/).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Generar y descargar" })).toBeDisabled();
+  const consolidated = await prisma.assignment.findFirstOrThrow({
+    where: { course: { user: { email } }, number: 1 },
+    select: {
+      status: true,
+      consolidatedBytes: true,
+      submissions: { select: { versions: { select: { files: { select: { storageKey: true, binaryDeletedAt: true, sha256: true, pageCount: true } } } } } },
+      pdfBuilds: { where: { status: "READY" }, select: { storageKey: true } },
+    },
+  });
+  expect(consolidated.status).toBe("CONSOLIDATED");
+  expect(consolidated.consolidatedBytes).toBeGreaterThan(0);
+  expect(consolidated.submissions.flatMap((submission) => submission.versions.flatMap((version) => version.files)).every((file) => !file.storageKey && file.binaryDeletedAt && file.sha256 && file.pageCount)).toBe(true);
+  expect(consolidated.pdfBuilds.some((build) => build.storageKey)).toBe(true);
 });

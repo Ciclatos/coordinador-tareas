@@ -257,7 +257,9 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
     .getByRole("button", { name: "Evaluación", exact: true })
     .click();
   await page.getByRole("button", { name: "Aplicar 20 a todos" }).click();
-  await expect(page.getByText("Guardado ✓")).toBeVisible({ timeout: 30_000 });
+  await page.getByLabel("Comentario de Ana Integrante E2E").fill("Se observó procedimiento incompleto y presentación poco legible.");
+  await expect(page.locator(".save-status")).toHaveText("Guardando…", { timeout: 30_000 });
+  await expect(page.locator(".save-status")).toHaveText("Guardado ✓", { timeout: 30_000 });
   await expect(page.getByRole("cell", { name: "100" })).toBeVisible();
 
   await page.reload();
@@ -266,8 +268,11 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
     .getByRole("button", { name: "Evaluación", exact: true })
     .click();
   await expect(page.getByRole("cell", { name: "100" })).toBeVisible();
+  await expect(page.getByLabel("Comentario de Ana Integrante E2E")).toHaveValue(/procedimiento incompleto/);
 
   await page.getByRole("navigation").getByRole("button", { name: "PDF final", exact: true }).click();
+  await page.getByRole("button", { name: "Generar desde datos actuales" }).click();
+  await expect(page.getByLabel("Texto del reporte semanal")).toHaveValue(/Observaciones del coordinador[\s\S]*procedimientos[\s\S]*legibilidad/i);
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Generar y descargar" }).click();
   const finalPdf = await download;

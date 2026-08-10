@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
 import { MAX_PDF_BUILD_FILE_SIZE } from "@/lib/submission-files";
+import { logStorageError, publicUploadError } from "@/lib/storage-errors";
 
 export const runtime = "nodejs";
 
@@ -42,6 +43,7 @@ export async function POST(request: Request) {
     });
     return NextResponse.json(response);
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo cargar." }, { status: 400 });
+    logStorageError("pdf-build-upload", error);
+    return NextResponse.json({ error: publicUploadError(error, "No se pudo cargar el PDF final.") }, { status: 400 });
   }
 }

@@ -8,6 +8,7 @@ import {
 } from "@/lib/public-submission-session";
 import { submissionPath } from "@/lib/submission-path";
 import { portalAcceptsPublicSession } from "@/lib/submission-portal";
+import { logStorageError, publicUploadError } from "@/lib/storage-errors";
 
 export const runtime = "nodejs";
 const payloadSchema = z.object({
@@ -105,12 +106,10 @@ export async function POST(request: Request) {
     });
     return NextResponse.json(response);
   } catch (error) {
+    logStorageError("public-submission-upload", error);
     return NextResponse.json(
       {
-        error:
-          error instanceof Error
-            ? error.message
-            : "No se pudo iniciar la carga.",
+        error: publicUploadError(error, "No se pudo iniciar la carga."),
       },
       { status: 400 },
     );

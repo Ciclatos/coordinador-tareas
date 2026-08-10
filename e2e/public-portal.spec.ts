@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 import { hash } from "bcryptjs";
 import { PDFDocument, StandardFonts } from "pdf-lib";
-import { del } from "@vercel/blob";
+import { deleteBlobKeysWithRetry } from "../src/lib/blob-cleanup";
 
 const prisma = new PrismaClient();
 const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -82,14 +82,12 @@ test.afterAll(async () => {
     where: { assignment: { courseId }, storageKey: { not: null } },
     select: { storageKey: true },
   });
-  await Promise.allSettled(
-    [
+  await deleteBlobKeysWithRetry([
       ...files.map((file) => file.storageKey),
       ...builds.flatMap((build) =>
         build.storageKey ? [build.storageKey] : [],
       ),
-    ].map((storageKey) => del(storageKey)),
-  );
+    ]);
   await prisma.assignment.deleteMany({ where: { courseId } });
   await prisma.course.deleteMany({ where: { id: courseId } });
   await prisma.user.deleteMany({ where: { email } });

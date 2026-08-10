@@ -1,5 +1,13 @@
 import { defineConfig, devices } from "@playwright/test";
 
+if (!process.env.BLOB_READ_WRITE_TOKEN) {
+  try {
+    process.loadEnvFile(".env.local");
+  } catch {
+    // CI y Vercel inyectan variables sin depender de un archivo local.
+  }
+}
+
 const externalBaseUrl = process.env.PLAYWRIGHT_BASE_URL;
 
 export default defineConfig({

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 import { PDFDocument } from "pdf-lib";
-import { del } from "@vercel/blob";
+import { deleteBlobKeysWithRetry } from "../src/lib/blob-cleanup";
 import sharp from "sharp";
 import { randomBytes } from "node:crypto";
 
@@ -23,7 +23,7 @@ test.afterAll(async () => {
     ...assignment.pdfBuilds.flatMap((build) => build.storageKey ? [build.storageKey] : []),
     ...assignment.submissions.flatMap((submission) => submission.versions.flatMap((version) => version.files.map((file) => file.storageKey))),
   ]));
-  await Promise.allSettled(storageKeys.map((storageKey) => del(storageKey)));
+  await deleteBlobKeysWithRetry(storageKeys);
   await prisma.$transaction([
     prisma.assignment.deleteMany({
       where: { course: { user: { email } } },
@@ -48,6 +48,11 @@ test("protege la aplicación, registra una cuenta y persiste el CRUD base", asyn
   await expect(page.getByText("Bienvenido a Coordinador de Tareas")).toBeVisible();
   await page.getByRole("button", { name: "Omitir tutorial" }).click();
   await expect(page.getByRole("heading", { name: "Hola, Usuario" })).toBeVisible();
+  await page.getByRole("button", { name: "Configuración", exact: true }).click();
+  await page.getByRole("button", { name: "Consultar uso" }).click();
+  await expect(page.getByText(/MB \/ 1\.00 GB/)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Entregas vigentes", { exact: true })).toBeVisible();
+  await expect(page.getByText(/0 referencias sin blob/)).toBeVisible();
   const e2eUser = await prisma.user.findUniqueOrThrow({ where: { email } });
   await prisma.userTutorialProgress.createMany({
     skipDuplicates: true,

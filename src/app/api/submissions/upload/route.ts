@@ -8,6 +8,7 @@ import {
   MAX_SUBMISSION_FILE_SIZE,
 } from "@/lib/submission-files";
 import { submissionPath } from "@/lib/submission-path";
+import { logStorageError, publicUploadError } from "@/lib/storage-errors";
 
 export const runtime = "nodejs";
 
@@ -72,8 +73,9 @@ export async function POST(request: Request) {
     });
     return NextResponse.json(response);
   } catch (error) {
+    logStorageError("coordinator-submission-upload", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "No se pudo cargar." },
+      { error: publicUploadError(error, "No se pudo cargar el archivo.") },
       { status: 400 },
     );
   }

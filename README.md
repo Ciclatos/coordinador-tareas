@@ -1,5 +1,26 @@
 # Coordinador de Tareas
 
+## Administración de almacenamiento
+
+La sección **Configuración > Almacenamiento** consulta el inventario privado de Vercel Blob y lo cruza con PostgreSQL. Muestra uso total, entregas vigentes, versiones históricas, PDF finales, archivos QA, temporales, duplicados y huérfanos. Las limpiezas globales requieren autorización administrativa y la frase `LIMPIAR ALMACENAMIENTO`; nunca incluyen archivos con referencias vigentes.
+
+Comandos operativos:
+
+```bash
+npm run storage:audit
+npm run storage:cleanup:preview
+npm run storage:audit -- --cleanup-orphans --execute --confirm=DELETE_UNREFERENCED_BLOBS
+```
+
+Variables:
+
+- `BLOB_STORAGE_LIMIT_BYTES`: límite mostrado en el panel; por defecto 1 GiB.
+- `STORAGE_ADMIN_EMAILS`: lista separada por comas autorizada para limpiezas. Si no se configura, se usa la cuenta real más antigua.
+- `PDF_BUILD_RETENTION`: versiones finales conservadas por tarea; por defecto 3.
+- `CRON_SECRET`: protege `/api/cron/storage-gc`, ejecutado diariamente por Vercel Cron.
+
+El recolector aplica una gracia de 24 horas y solo elimina blobs sin referencia en `SubmissionFile`, `PdfBuild` o `CoverTemplate`. Los errores de capacidad se registran en servidor y se traducen a un mensaje seguro para estudiantes. Véase [la auditoría de producción](docs/storage-audit-2026-08-09.md).
+
 Aplicación web en español para coordinar tareas grupales universitarias: define secciones y ejercicios, distribuye la carga considerando el historial, recibe archivos, registra evaluaciones y compila un PDF final tamaño carta.
 
 ## Enlaces

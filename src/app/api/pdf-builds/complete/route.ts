@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
 import { inspectSubmissionStream, MAX_PDF_BUILD_FILE_SIZE } from "@/lib/submission-files";
+import { deleteBlobKeysWithRetry } from "@/lib/blob-cleanup";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -58,6 +59,28 @@ export async function POST(request: Request) {
       select: { id: true, version: true },
     });
     await prisma.assignment.update({ where: { id: assignment.id }, data: { status: "FINALIZED" } });
+    const configuredRetention = Number(process.env.PDF_BUILD_RETENTION);
+    const retention = Number.isInteger(configuredRetention) && configuredRetention > 0
+      ? configuredRetention
+      : 3;
+    const superseded = await prisma.pdfBuild.findMany({
+      where: { assignmentId: assignment.id },
+      orderBy: { version: "desc" },
+      skip: retention,
+      select: { id: true, storageKey: true },
+    });
+    if (superseded.length) {
+      await prisma.pdfBuild.deleteMany({
+        where: { id: { in: superseded.map((item) => item.id) } },
+      });
+      const obsoleteKeys = superseded.flatMap((item) =>
+        item.storageKey ? [item.storageKey] : [],
+      );
+      if (obsoleteKeys.length)
+        await deleteBlobKeysWithRetry(obsoleteKeys).catch((cleanupError) => {
+          console.error("pdf_build_retention_blob_cleanup_failed", cleanupError);
+        });
+    }
     return NextResponse.json({ ok: true, build });
   } catch (error) {
     await del(expected).catch(() => undefined);

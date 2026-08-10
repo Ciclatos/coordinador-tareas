@@ -121,9 +121,28 @@ function formatDate(value: string, withTime = false) {
 async function sourceBytes(source: File | StoredPdfSource) {
   if (source instanceof File)
     return { bytes: new Uint8Array(await source.arrayBuffer()), mimeType: source.type, name: source.name };
-  const response = await fetch(source.url, { credentials: "same-origin", cache: "no-store" });
-  if (!response.ok) throw new Error(`No se pudo leer ${source.name}.`);
-  return { bytes: new Uint8Array(await response.arrayBuffer()), mimeType: source.mimeType, name: source.name };
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(source.url, {
+        credentials: "same-origin",
+        cache: "no-store",
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!response.ok) throw new Error(`Respuesta ${response.status}`);
+      return {
+        bytes: new Uint8Array(await response.arrayBuffer()),
+        mimeType: source.mimeType,
+        name: source.name,
+      };
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2)
+        await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
+    }
+  }
+  console.error("stored_pdf_download_failed", { name: source.name, error: lastError });
+  throw new Error(`No se pudo leer ${source.name} después de varios intentos.`);
 }
 
 const imageProfiles = {

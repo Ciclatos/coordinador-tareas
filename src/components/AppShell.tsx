@@ -39,6 +39,9 @@ import { EntityModal, type EditableEntity } from "@/components/EntityModal";
 import { PdfPageThumbnails } from "@/components/PdfPageThumbnails";
 import PortalManager from "@/components/PortalManager";
 import TutorialSystem from "@/components/TutorialSystem";
+import StoragePanel from "@/components/StoragePanel";
+import { publicUploadError } from "@/lib/storage-errors";
+import { withNetworkRetry } from "@/lib/network-retry";
 import type { TutorialProgressDto } from "@/lib/tutorial-progress";
 import {
   copyMembers,
@@ -507,7 +510,7 @@ export default function AppShell({
       const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
       const uploadId = crypto.randomUUID();
       const pathname = `pdf-builds/${currentAssignment.id}/${uploadId}.pdf`;
-      const stored = await upload(pathname, blob, {
+      const stored = await withNetworkRetry(() => upload(pathname, blob, {
         access: "private",
         handleUploadUrl: "/api/pdf-builds/upload",
         clientPayload: JSON.stringify({
@@ -516,7 +519,7 @@ export default function AppShell({
         }),
         contentType: "application/pdf",
         multipart: blob.size > 5 * 1024 * 1024,
-      });
+      }));
       const completed = await fetch("/api/pdf-builds/complete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -560,11 +563,7 @@ export default function AppShell({
         `PDF final generado y guardado como versión ${completion.build.version}`,
       );
     } catch (error) {
-      notify(
-        error instanceof Error
-          ? `No se pudo generar el PDF: ${error.message}`
-          : "No se pudo generar el PDF.",
-      );
+      notify(publicUploadError(error, "No se pudo generar y almacenar el PDF final."));
     } finally {
       setPdfGenerating(false);
     }
@@ -2694,7 +2693,7 @@ function Submissions({ courses, activeAssignmentId }: { courses: DashboardData; 
           uploadId,
           originalName: file.name,
         };
-        const blob = await upload(
+        const blob = await withNetworkRetry(() => upload(
           submissionPath(assignment.id, uploadId, file.name),
           file,
           {
@@ -2708,7 +2707,7 @@ function Submissions({ courses, activeAssignmentId }: { courses: DashboardData; 
                 Math.round(((index + percentage / 100) / pending.length) * 100),
               ),
           },
-        );
+        ));
         completed.push({
           pathname: blob.pathname,
           originalName: file.name,
@@ -2737,11 +2736,7 @@ function Submissions({ courses, activeAssignmentId }: { courses: DashboardData; 
       setMessage(`Entrega guardada como versión ${result.version}.`);
       router.refresh();
     } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "No se pudo cargar la entrega.",
-      );
+      setMessage(publicUploadError(error, "No se pudo cargar la entrega. Inténtelo nuevamente."));
     } finally {
       setUploading(false);
     }
@@ -3961,6 +3956,7 @@ function SettingsView({
         </button>
         {message && <p className="notice">{message}</p>}
       </div>
+      <StoragePanel />
     </>
   );
 }

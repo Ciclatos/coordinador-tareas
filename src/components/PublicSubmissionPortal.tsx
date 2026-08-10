@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { upload } from "@vercel/blob/client";
+import { publicUploadError } from "@/lib/storage-errors";
+import { withNetworkRetry } from "@/lib/network-retry";
 import { CheckCircle2, FileText, ShieldCheck, UploadCloud } from "lucide-react";
 import { submissionPath } from "@/lib/submission-path";
 
@@ -141,7 +143,7 @@ export default function PublicSubmissionPortal({
     const uploadId = crypto.randomUUID();
     const idempotencyKey = crypto.randomUUID();
     try {
-      const blob = await upload(
+      const blob = await withNetworkRetry(() => upload(
         submissionPath("public", uploadId, file.name),
         file,
         {
@@ -157,7 +159,7 @@ export default function PublicSubmissionPortal({
           onUploadProgress: ({ percentage }) =>
             setProgress(Math.round(percentage)),
         },
-      );
+      ));
       const response = await fetch("/api/public-submissions/complete", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
@@ -176,11 +178,7 @@ export default function PublicSubmissionPortal({
       setFile(null);
       setProgress(100);
     } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "No se pudo enviar la entrega.",
-      );
+      setMessage(publicUploadError(error, "No se pudo enviar la entrega. Inténtelo nuevamente."));
     } finally {
       setBusy(false);
     }

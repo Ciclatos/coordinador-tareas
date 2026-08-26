@@ -38,12 +38,14 @@ export default async function DashboardPage({
   });
   const requestedAssignmentId =
     typeof query.assignment === "string" ? query.assignment : undefined;
+  const activeAssignmentId = requestedAssignmentId ?? preferred?.assignmentId;
   return (
     <AppShell
+      key={activeAssignmentId ?? "no-active-assignment"}
       initialData={data}
       tutorialEligible={user.tutorialEligible}
       tutorialProgress={user.tutorialProgress as TutorialProgressDto[]}
-      initialAssignmentId={requestedAssignmentId ?? preferred?.assignmentId}
+      initialAssignmentId={activeAssignmentId}
       initialView={typeof query.view === "string" ? query.view : undefined}
       currentUser={{
         name: user.profile?.name ?? user.email,

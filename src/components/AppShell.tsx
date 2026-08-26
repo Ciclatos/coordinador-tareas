@@ -1,5 +1,5 @@
 "use client";
-import { Component, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { upload } from "@vercel/blob/client";
 import { useRouter } from "next/navigation";
 import {
@@ -1542,8 +1542,10 @@ function Distribution({
     instructions?: string | null;
   };
 }) {
-  const [saving, startSaving] = useTransition();
   const [saveMessage, setSaveMessage] = useState("");
+  const [autosaveStatus, setAutosaveStatus] = useState<
+    "saved" | "pending" | "saving" | "error"
+  >("saved");
   const [exportView, setExportView] = useState<
     "section" | "member" | "summary"
   >("member");
@@ -1694,6 +1696,118 @@ function Distribution({
     allocations.every((allocation) =>
       eligibleMembers.some((member) => member.id === allocation.memberId),
     );
+  const saveInput = useMemo(
+    () =>
+      assignmentId
+        ? {
+            assignmentId,
+            seed: "5",
+            mode: distributionMode,
+            excludedMemberIds,
+            sections: sections.map((section) => ({
+              localId: section.id,
+              name: section.name,
+              selection: section.selection,
+              start: section.start,
+              end: section.end ?? 0,
+              interval: section.interval,
+              manualList: section.manualList,
+              exclusions: section.exclusions,
+              inclusions: section.inclusions,
+              labels: section.labels,
+              defaultWeight: section.defaultWeight,
+              notes: section.notes,
+            })),
+            exercises: exercises.map((item) => ({
+              localId: item.id,
+              sectionId: item.sectionId,
+              section: item.section,
+              label: item.label,
+              weight: item.weight,
+            })),
+            allocations,
+          }
+        : null,
+    [
+      allocations,
+      assignmentId,
+      distributionMode,
+      excludedMemberIds,
+      exercises,
+      sections,
+    ],
+  );
+  const saveFingerprint = saveInput ? JSON.stringify(saveInput) : "";
+  const latestSave = useRef({
+    fingerprint: saveFingerprint,
+    input: saveInput,
+    ready: distributionComplete,
+  });
+  const lastSavedFingerprint = useRef(saveFingerprint);
+  const [savedFingerprint, setSavedFingerprint] = useState(saveFingerprint);
+  const saveInFlight = useRef(false);
+  useEffect(() => {
+    latestSave.current = {
+      fingerprint: saveFingerprint,
+      input: saveInput,
+      ready: distributionComplete,
+    };
+  }, [distributionComplete, saveFingerprint, saveInput]);
+  const persistLatestDistribution = useCallback(async () => {
+    if (saveInFlight.current) return;
+    saveInFlight.current = true;
+    try {
+      while (
+        latestSave.current.ready &&
+        latestSave.current.input &&
+        latestSave.current.fingerprint !== lastSavedFingerprint.current
+      ) {
+        const pending = latestSave.current;
+        if (!pending.input) break;
+        setAutosaveStatus("saving");
+        const result = await saveDistribution(pending.input);
+        if (!result.ok) {
+          setAutosaveStatus("error");
+          setSaveMessage(result.message);
+          return;
+        }
+        lastSavedFingerprint.current = pending.fingerprint;
+        setSavedFingerprint(pending.fingerprint);
+        setSaveMessage("");
+      }
+      setAutosaveStatus("saved");
+    } finally {
+      saveInFlight.current = false;
+    }
+  }, []);
+  useEffect(() => {
+    if (
+      !distributionComplete ||
+      !latestSave.current.input ||
+      saveFingerprint === lastSavedFingerprint.current
+    )
+      return;
+    setAutosaveStatus("pending");
+    const timer = window.setTimeout(() => {
+      void persistLatestDistribution();
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [
+    distributionComplete,
+    persistLatestDistribution,
+    saveFingerprint,
+  ]);
+  useEffect(() => {
+    const warnIfPending = (event: BeforeUnloadEvent) => {
+      if (
+        latestSave.current.ready &&
+        latestSave.current.fingerprint !== lastSavedFingerprint.current
+      )
+        event.preventDefault();
+    };
+    window.addEventListener("beforeunload", warnIfPending);
+    return () => window.removeEventListener("beforeunload", warnIfPending);
+  }, []);
   const sectionView = distributionBySection(
     exercises,
     allocations,
@@ -1750,7 +1864,9 @@ function Distribution({
       }
     : null;
   const imagePages =
-    imageInput && distributionComplete
+    imageInput &&
+    distributionComplete &&
+    savedFingerprint === saveFingerprint
       ? createDistributionImages(imageInput)
       : [];
   const generatedPage =
@@ -1842,6 +1958,15 @@ function Distribution({
         title="Distribución de ejercicios"
       >
         <div className="title-actions">
+          <span className="save-status" aria-live="polite">
+            {autosaveStatus === "saving"
+              ? "Guardando…"
+              : autosaveStatus === "pending"
+                ? "Cambios pendientes…"
+                : autosaveStatus === "error"
+                  ? "No se pudo guardar"
+                  : "Guardado automáticamente ✓"}
+          </span>
           <button className="outline" onClick={regenerate}>
             Redistribuir
           </button>
@@ -1851,44 +1976,11 @@ function Distribution({
               !assignmentId ||
               !eligibleMembers.length ||
               !distributionComplete ||
-              saving
+              autosaveStatus === "saving"
             }
-            onClick={() =>
-              assignmentId &&
-              startSaving(async () => {
-                const result = await saveDistribution({
-                  assignmentId,
-                  seed: "5",
-                  mode: distributionMode,
-                  excludedMemberIds,
-                  sections: sections.map((section) => ({
-                    localId: section.id,
-                    name: section.name,
-                    selection: section.selection,
-                    start: section.start,
-                    end: section.end ?? 0,
-                    interval: section.interval,
-                    manualList: section.manualList,
-                    exclusions: section.exclusions,
-                    inclusions: section.inclusions,
-                    labels: section.labels,
-                    defaultWeight: section.defaultWeight,
-                    notes: section.notes,
-                  })),
-                  exercises: exercises.map((item) => ({
-                    localId: item.id,
-                    sectionId: item.sectionId,
-                    section: item.section,
-                    label: item.label,
-                    weight: item.weight,
-                  })),
-                  allocations,
-                });
-                setSaveMessage(result.message);
-              })
-            }
+            onClick={() => void persistLatestDistribution()}
           >
-            {saving ? "Guardando…" : "Guardar distribución"}
+            {autosaveStatus === "error" ? "Reintentar" : "Guardar ahora"}
           </button>
         </div>
       </Title>

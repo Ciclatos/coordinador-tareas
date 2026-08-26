@@ -28,7 +28,7 @@ const base: DistributionImageOptions = {
   includeWeight: true, size: "whatsapp", nameMode: "full", primaryColor: "#17624f",
   footer: "Resolver todos los ejercicios mostrando el procedimiento completo y enviar en un PDF legible.",
 };
-const input = { courseName: "Cálculo 2", assignmentNumber: 4, assignmentTitle: "Series", dueAt: "2026-08-10T20:00:00Z", instructions: "Usar tinta negra", exercises, allocations, members, options: base };
+const input = { courseName: "Cálculo 2", assignmentNumber: 4, weekNumber: 7, assignmentTitle: "Series", dueAt: "2026-08-10T20:00:00Z", instructions: "Usar tinta negra", exercises, allocations, members, options: base };
 
 describe("exportación visual de distribución", () => {
   it("genera un resumen vertical para seis integrantes, tres secciones y listas largas sin perder ejercicios", () => {
@@ -37,6 +37,8 @@ describe("exportación visual de distribución", () => {
     expect(pages[0].width).toBe(1080);
     expect(pages[0].height).toBeGreaterThan(1920);
     expect(pages[0].filename).toBe("calculo-2-tarea-4-distribucion.png");
+    expect(pages[0].svg).toContain("Semana 7 · Tarea 4: Series");
+    expect(pages[0].svg).not.toContain("Semana 5 · Tarea 5");
     expect(pages[0].svg).not.toContain("Parte 2 de");
     members.forEach((member) => expect(pages[0].svg.includes(member.name)).toBe(true));
     for (const member of members) {
@@ -45,6 +47,12 @@ describe("exportación visual de distribución", () => {
       expect(pages[0].svg.includes(`Total: ${total} ejercicios`)).toBe(true);
     }
     expect(pages.map((page) => page.svg).join("\n")).not.toContain("…");
+  });
+
+  it("actualiza semana, tarea y título para cada distribución", () => {
+    const [page] = createDistributionImages({ ...input, assignmentNumber: 8, weekNumber: 9, assignmentTitle: "Integrales impropias" });
+    expect(page.svg).toContain("Semana 9 · Tarea 8: Integrales impropias");
+    expect(page.filename).toBe("calculo-2-tarea-8-distribucion.png");
   });
 
   it("genera una tarjeta completa y un nombre descriptivo por integrante", () => {

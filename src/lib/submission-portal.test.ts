@@ -159,7 +159,23 @@ describe("seguridad del portal público", () => {
         },
         activeMemberIds: ["member-active"],
         excludedMemberIds: ["member-excluded"],
-        allocatedMemberIds: ["member-active"],
+      }),
+    ).toBe(true);
+  });
+
+  it("mantiene habilitado a un integrante activo aunque la distribución aún esté vacía", () => {
+    expect(
+      portalAcceptsPublicSession({
+        enabled: true,
+        tokenVersion: 1,
+        assignmentId: "assignment-new",
+        session: {
+          tokenVersion: 1,
+          assignmentId: "assignment-new",
+          memberId: "member-active",
+        },
+        activeMemberIds: ["member-active"],
+        excludedMemberIds: [],
       }),
     ).toBe(true);
   });
@@ -167,7 +183,6 @@ describe("seguridad del portal público", () => {
   it.each([
     { excludedMemberIds: ["member-active"] },
     { activeMemberIds: [] },
-    { allocatedMemberIds: [] },
     { tokenVersion: 2 },
     { assignmentId: "assignment-2" },
     { enabled: false },
@@ -184,7 +199,6 @@ describe("seguridad del portal público", () => {
         },
         activeMemberIds: ["member-active"],
         excludedMemberIds: ["member-excluded"],
-        allocatedMemberIds: ["member-active"],
         ...override,
       }),
     ).toBe(false);

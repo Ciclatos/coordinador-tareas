@@ -89,9 +89,6 @@ export async function POST(request: Request) {
       excludedMemberIds: portal.assignment.exclusions.map(
         (item) => item.memberId,
       ),
-      allocatedMemberIds: portal.assignment.allocations.map(
-        (item) => item.memberId,
-      ),
     })
   )
     return NextResponse.json(

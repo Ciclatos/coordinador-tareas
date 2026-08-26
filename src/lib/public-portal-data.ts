@@ -44,16 +44,8 @@ export function eligibleMembers(
   const excluded = new Set(
     portal.assignment.exclusions.map((item) => item.memberId),
   );
-  const allocated = new Set(
-    portal.assignment.sections.flatMap((section) =>
-      section.exercises.flatMap((exercise) =>
-        exercise.allocations.map((item) => item.memberId),
-      ),
-    ),
-  );
   return portal.assignment.course.members.filter(
-    (member) =>
-      member.active && allocated.has(member.id) && !excluded.has(member.id),
+    (member) => member.active && !excluded.has(member.id),
   );
 }
 

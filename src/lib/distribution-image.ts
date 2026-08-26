@@ -16,6 +16,7 @@ export type DistributionImageOptions = {
 export type DistributionImageInput = {
   courseName: string;
   assignmentNumber: number;
+  weekNumber: number;
   assignmentTitle: string;
   dueAt: string;
   instructions?: string | null;
@@ -87,7 +88,7 @@ function chrome(input: DistributionImageInput, width: number, height: number, bo
   const margin = Math.round(64 * scale);
   const color = /^#[0-9a-f]{6}$/i.test(input.options.primaryColor) ? input.options.primaryColor : "#17624f";
   const sections = [...new Set(input.exercises.map((exercise) => exercise.section))];
-  const task = `${input.courseName} — Tarea ${input.assignmentNumber}${input.assignmentTitle ? `: ${input.assignmentTitle}` : ""}`;
+  const task = `${input.courseName} — Semana ${input.weekNumber} · Tarea ${input.assignmentNumber}${input.assignmentTitle ? `: ${input.assignmentTitle}` : ""}`;
   const meta = [
     `Secciones ${sections.join(", ")}`,
     ...(input.options.includeDueDate ? [`Entrega: ${dueText(input.dueAt)}`] : []),

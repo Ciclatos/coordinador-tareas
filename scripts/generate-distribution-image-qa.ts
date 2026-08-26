@@ -29,7 +29,7 @@ const options: DistributionImageOptions = {
   footer: "Resolver todos los ejercicios mostrando el procedimiento completo y enviar en un PDF legible.",
 };
 const input = {
-  courseName: "Cálculo 2", assignmentNumber: 4, assignmentTitle: "Sucesiones y series",
+  courseName: "Cálculo 2", assignmentNumber: 4, weekNumber: 4, assignmentTitle: "Sucesiones y series",
   dueAt: "2026-08-10T18:00:00-06:00", instructions: null, exercises, allocations, members, options,
 };
 

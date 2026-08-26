@@ -754,6 +754,7 @@ export default function AppShell({
                 currentAssignment
                   ? {
                       number: currentAssignment.number,
+                      weekNumber: currentAssignment.weekNumber,
                       title: currentAssignment.title,
                       dueAt: currentAssignment.dueAt,
                       instructions: currentAssignment.instructions,
@@ -1535,6 +1536,7 @@ function Distribution({
   courseName: string;
   assignment?: {
     number: number;
+    weekNumber: number;
     title: string;
     dueAt: string;
     instructions?: string | null;
@@ -1737,6 +1739,7 @@ function Distribution({
     ? {
         courseName,
         assignmentNumber: assignment.number,
+        weekNumber: assignment.weekNumber,
         assignmentTitle: assignment.title,
         dueAt: assignment.dueAt,
         instructions: assignment.instructions,

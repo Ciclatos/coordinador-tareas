@@ -179,14 +179,12 @@ export function portalAcceptsPublicSession(input: {
   };
   activeMemberIds: string[];
   excludedMemberIds: string[];
-  allocatedMemberIds: string[];
 }) {
   return (
     input.enabled &&
     input.tokenVersion === input.session.tokenVersion &&
     input.assignmentId === input.session.assignmentId &&
     input.activeMemberIds.includes(input.session.memberId) &&
-    !input.excludedMemberIds.includes(input.session.memberId) &&
-    input.allocatedMemberIds.includes(input.session.memberId)
+    !input.excludedMemberIds.includes(input.session.memberId)
   );
 }

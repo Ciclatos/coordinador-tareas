@@ -142,9 +142,10 @@ export default function PublicSubmissionPortal({
     setProgress(0);
     const uploadId = crypto.randomUUID();
     const idempotencyKey = crypto.randomUUID();
+    const expectedPathname = submissionPath("public", uploadId, file.name);
     try {
       const blob = await withNetworkRetry(() => upload(
-        submissionPath("public", uploadId, file.name),
+        expectedPathname,
         file,
         {
           access: "private",

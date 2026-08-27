@@ -16,6 +16,21 @@ describe("errores de almacenamiento", () => {
     expect(publicUploadError(new Error("otro error interno"), "fallback")).toBe("fallback");
   });
 
+  it("conserva mensajes públicos y accionables de validación", () => {
+    expect(
+      publicUploadError(
+        new Error("El PDF está dañado, vacío o protegido con contraseña."),
+        "fallback",
+      ),
+    ).toBe("El PDF está dañado, vacío o protegido con contraseña.");
+    expect(
+      publicUploadError(
+        new Error("La sesión expiró. Confirme nuevamente."),
+        "fallback",
+      ),
+    ).toBe("La sesión expiró. Confirme nuevamente.");
+  });
+
   it("registra la causa técnica solo en el servidor", () => {
     const logger = vi.spyOn(console, "error").mockImplementation(() => undefined);
     logStorageError("public-upload", new Error("quota exceeded"));

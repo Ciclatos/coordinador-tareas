@@ -256,7 +256,7 @@ export async function POST(request: Request) {
         },
       });
       return version;
-    });
+    }, { maxWait: 10_000, timeout: 45_000 });
     return NextResponse.json({
       ok: true,
       version: result.version,
@@ -266,7 +266,7 @@ export async function POST(request: Request) {
       late: firstLate,
       receivedAt: now.toISOString(),
     });
-  } catch {
+  } catch (error) {
     const duplicate = await prisma.submissionVersion.findUnique({
       where: { idempotencyKey: parsed.data.idempotencyKey },
       select: { version: true, receiptCode: true },
@@ -280,6 +280,22 @@ export async function POST(request: Request) {
         pageCount: details.pageCount,
         late: firstLate,
       });
+    console.error("[public-submission-complete] No se pudo registrar", {
+      assignmentId: session.assignmentId,
+      memberId: session.memberId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    await prisma.submissionAuditEvent
+      .create({
+        data: {
+          assignmentId: session.assignmentId,
+          portalId: portal.id,
+          memberId: session.memberId,
+          eventType: "SUBMISSION_FAILED",
+          metadata: { stage: "database" },
+        },
+      })
+      .catch(() => undefined);
     await del(parsed.data.pathname).catch(() => undefined);
     return NextResponse.json(
       { error: "No se pudo registrar la entrega. Inténtelo nuevamente." },

@@ -96,7 +96,8 @@ export async function POST(request: Request) {
         return {
           allowedContentTypes: portal.allowedMimeTypes as string[],
           maximumSizeInBytes: portal.maxFileSize,
-          addRandomSuffix: true,
+          addRandomSuffix: false,
+          allowOverwrite: true,
           cacheControlMaxAge: 60,
         };
       },

@@ -9,7 +9,13 @@ export function isStorageCapacityError(error: unknown) {
 }
 
 export function publicUploadError(error: unknown, fallback: string) {
-  return isStorageCapacityError(error) ? STORAGE_MESSAGE : fallback;
+  if (isStorageCapacityError(error)) return STORAGE_MESSAGE;
+  const message = error instanceof Error ? error.message : "";
+  return /^(La sesión|El portal|El archivo|El PDF|La extensión|El tipo real|No se encontró|No se permiten|Confirmación inválida)/.test(
+    message,
+  )
+    ? message
+    : fallback;
 }
 
 export function logStorageError(context: string, error: unknown) {

@@ -144,23 +144,31 @@ export default function PublicSubmissionPortal({
     const idempotencyKey = crypto.randomUUID();
     const expectedPathname = submissionPath("public", uploadId, file.name);
     try {
-      const blob = await withNetworkRetry(() => upload(
-        expectedPathname,
-        file,
-        {
-          access: "private",
-          handleUploadUrl: "/api/public-submissions/upload",
-          clientPayload: JSON.stringify({
-            csrf,
-            uploadId,
-            originalName: file.name,
-          }),
-          contentType: file.type,
-          multipart: file.size > 5 * 1024 * 1024,
-          onUploadProgress: ({ percentage }) =>
-            setProgress(Math.round(percentage)),
-        },
-      ));
+      let uploadedPathname = expectedPathname;
+      try {
+        const blob = await withNetworkRetry(() => upload(
+          expectedPathname,
+          file,
+          {
+            access: "private",
+            handleUploadUrl: "/api/public-submissions/upload",
+            clientPayload: JSON.stringify({
+              csrf,
+              uploadId,
+              originalName: file.name,
+            }),
+            contentType: file.type,
+            multipart: file.size > 5 * 1024 * 1024,
+            onUploadProgress: ({ percentage }) =>
+              setProgress(Math.round(percentage)),
+          },
+        ));
+        uploadedPathname = blob.pathname;
+      } catch {
+        // La respuesta del SDK puede perderse después de que Blob haya
+        // almacenado el archivo. La confirmación valida su existencia, MIME,
+        // tamaño y contenido antes de registrar la entrega.
+      }
       const response = await fetch("/api/public-submissions/complete", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
@@ -168,7 +176,7 @@ export default function PublicSubmissionPortal({
           csrf,
           idempotencyKey,
           uploadId,
-          pathname: blob.pathname,
+          pathname: uploadedPathname,
           originalName: file.name,
           confirmed: true,
         }),

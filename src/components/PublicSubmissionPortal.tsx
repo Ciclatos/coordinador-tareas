@@ -155,6 +155,7 @@ export default function PublicSubmissionPortal({
             clientPayload: JSON.stringify({
               csrf,
               uploadId,
+              idempotencyKey,
               originalName: file.name,
             }),
             contentType: file.type,

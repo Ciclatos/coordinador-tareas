@@ -9,12 +9,21 @@ import {
 import { submissionPath } from "@/lib/submission-path";
 import { portalAcceptsPublicSession } from "@/lib/submission-portal";
 import { logStorageError, publicUploadError } from "@/lib/storage-errors";
+import { finalizePublicSubmission } from "@/lib/public-submission-finalizer";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 const payloadSchema = z.object({
   csrf: z.string(),
   uploadId: z.string().uuid(),
+  idempotencyKey: z.string().uuid(),
   originalName: z.string().min(1).max(255),
+});
+const callbackSchema = payloadSchema.omit({ csrf: true }).extend({
+  portalId: z.string().cuid(),
+  assignmentId: z.string().cuid(),
+  memberId: z.string().cuid(),
+  tokenVersion: z.number().int().positive(),
 });
 
 export async function POST(request: Request) {
@@ -99,7 +108,34 @@ export async function POST(request: Request) {
           addRandomSuffix: false,
           allowOverwrite: true,
           cacheControlMaxAge: 60,
+          callbackUrl: `${new URL(request.url).origin}/api/public-submissions/upload`,
+          tokenPayload: JSON.stringify({
+            portalId: portal.id,
+            assignmentId: portal.assignmentId,
+            memberId: session.memberId,
+            tokenVersion: portal.tokenVersion,
+            uploadId: parsed.data.uploadId,
+            idempotencyKey: parsed.data.idempotencyKey,
+            originalName: parsed.data.originalName,
+          }),
         };
+      },
+      onUploadCompleted: async ({ blob, tokenPayload }) => {
+        const parsed = callbackSchema.safeParse(
+          tokenPayload ? JSON.parse(tokenPayload) : null,
+        );
+        if (!parsed.success)
+          throw new Error("El callback de la entrega no contiene datos válidos.");
+        await finalizePublicSubmission({
+          portalId: parsed.data.portalId,
+          assignmentId: parsed.data.assignmentId,
+          memberId: parsed.data.memberId,
+          tokenVersion: parsed.data.tokenVersion,
+          uploadId: parsed.data.uploadId,
+          idempotencyKey: parsed.data.idempotencyKey,
+          originalName: parsed.data.originalName,
+          pathname: blob.pathname,
+        });
       },
     });
     return NextResponse.json(response);

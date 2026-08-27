@@ -4,6 +4,7 @@ import {
   hashPortalToken,
   portalState,
   publicMemberReference,
+  publicReplacementAvailability,
 } from "@/lib/submission-portal";
 
 export async function findPublicPortal(rawToken: string) {
@@ -107,6 +108,14 @@ export function memberDeliveryDetails(
   const submission = assignment.submissions.find(
     (item) => item.memberId === memberId,
   );
+  const currentVersion = submission?.versions[0]?.version ?? 0;
+  const replacementAvailability = publicReplacementAvailability({
+    hasSubmission: Boolean(submission),
+    currentVersion,
+    status: submission?.status,
+    allowReplacements: portal.allowReplacements,
+    maxReplacements: portal.maxReplacements,
+  });
   return {
     memberName: member.fullName,
     course: assignment.course.name,
@@ -134,13 +143,11 @@ export function memberDeliveryDetails(
             submission.lastReceivedAt?.toISOString() ??
             submission.receivedAt?.toISOString() ??
             null,
-          version: submission.versions[0]?.version ?? 0,
+          version: currentVersion,
           reviewComment: submission.reviewComment,
         }
       : null,
-    mayReplace:
-      !submission ||
-      portal.allowReplacements ||
-      submission.status === "NEEDS_CORRECTION",
+    ...replacementAvailability,
+    maxReplacements: portal.maxReplacements,
   };
 }

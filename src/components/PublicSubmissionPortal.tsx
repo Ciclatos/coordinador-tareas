@@ -6,6 +6,7 @@ import { publicUploadError } from "@/lib/storage-errors";
 import { withNetworkRetry } from "@/lib/network-retry";
 import { CheckCircle2, FileText, ShieldCheck, UploadCloud } from "lucide-react";
 import { submissionPath } from "@/lib/submission-path";
+import { submissionStatusLabel } from "@/lib/submission-presentation";
 
 type Summary = {
   state: string;
@@ -38,6 +39,9 @@ type Details = {
     reviewComment: string | null;
   };
   mayReplace: boolean;
+  replacementsUsed: number;
+  replacementsRemaining: number;
+  maxReplacements: number;
 };
 type Receipt = {
   receiptCode: string;
@@ -353,7 +357,7 @@ export default function PublicSubmissionPortal({
               <aside>
                 <b>
                   Entrega anterior: versión {details.previous.version} ·{" "}
-                  {details.previous.status}
+                  {submissionStatusLabel(details.previous.status)}
                 </b>
                 {details.previous.reviewComment && (
                   <p>
@@ -423,10 +427,17 @@ export default function PublicSubmissionPortal({
             </section>
           ) : (
             <section className="public-card">
-              <h2>Entrega recibida</h2>
+              <p className="eyebrow">Entrega protegida</p>
+              <h2>Ya se alcanzó el límite de versiones</h2>
               <p>
-                Los reemplazos están deshabilitados o ya se alcanzó el máximo
-                permitido.
+                Su entrega está registrada correctamente como versión {details.previous?.version}.
+                {details.maxReplacements > 0
+                  ? ` Ya utilizó los ${details.maxReplacements} reemplazos permitidos para esta tarea.`
+                  : " Esta tarea no permite reemplazos."}
+              </p>
+              <p>
+                No es necesario volver a subir el archivo. Si necesita realizar
+                otra corrección, comuníquese con el coordinador.
               </p>
             </section>
           )}

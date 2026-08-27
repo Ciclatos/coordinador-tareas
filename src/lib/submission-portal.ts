@@ -168,6 +168,31 @@ export function allowedExtension(mimeType: string) {
   )[mimeType];
 }
 
+export function publicReplacementAvailability(input: {
+  hasSubmission: boolean;
+  currentVersion: number;
+  status?: string | null;
+  allowReplacements: boolean;
+  maxReplacements: number;
+}) {
+  if (!input.hasSubmission)
+    return { mayReplace: true, replacementsUsed: 0, replacementsRemaining: input.maxReplacements };
+
+  const replacementsUsed = Math.max(0, input.currentVersion - 1);
+  const replacementsRemaining = Math.max(
+    0,
+    input.maxReplacements - replacementsUsed,
+  );
+  const correctionRequested = input.status === "NEEDS_CORRECTION";
+  return {
+    mayReplace:
+      correctionRequested ||
+      (input.allowReplacements && replacementsRemaining > 0),
+    replacementsUsed,
+    replacementsRemaining,
+  };
+}
+
 export function portalAcceptsPublicSession(input: {
   enabled: boolean;
   tokenVersion: number;

@@ -11,6 +11,7 @@ import {
   portalAcceptsPublicSession,
   portalState,
   publicMemberReference,
+  publicReplacementAvailability,
   rateLimitDelay,
   verifyCarnet,
 } from "./submission-portal";
@@ -138,6 +139,34 @@ describe("seguridad del portal público", () => {
     expect(rateLimitDelay(5)).toBe(5 * 60 * 1000);
     expect(rateLimitDelay(7)).toBe(15 * 60 * 1000);
     expect(rateLimitDelay(10)).toBe(60 * 60 * 1000);
+  });
+
+  it("bloquea el formulario al consumir todos los reemplazos permitidos", () => {
+    expect(
+      publicReplacementAvailability({
+        hasSubmission: true,
+        currentVersion: 3,
+        status: "REVIEWING",
+        allowReplacements: true,
+        maxReplacements: 2,
+      }),
+    ).toEqual({
+      mayReplace: false,
+      replacementsUsed: 2,
+      replacementsRemaining: 0,
+    });
+  });
+
+  it("mantiene habilitada una corrección solicitada aunque se agotara el límite normal", () => {
+    expect(
+      publicReplacementAvailability({
+        hasSubmission: true,
+        currentVersion: 3,
+        status: "NEEDS_CORRECTION",
+        allowReplacements: true,
+        maxReplacements: 2,
+      }).mayReplace,
+    ).toBe(true);
   });
 
   it("genera un comprobante descriptivo sin conceder acceso", () => {

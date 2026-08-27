@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { PDFDocument } from "pdf-lib";
-import sharp from "sharp";
 
 export const MAX_SUBMISSION_FILE_SIZE = 25 * 1024 * 1024;
 // Una compilación reúne varias entregas válidas de hasta 25 MB cada una.
@@ -53,6 +52,58 @@ export function detectMimeType(bytes: Uint8Array): SubmissionMimeType | null {
   return null;
 }
 
+function validImageStructure(bytes: Buffer, mimeType: SubmissionMimeType) {
+  if (mimeType === "image/png") {
+    if (bytes.length < 33 || bytes.toString("ascii", 12, 16) !== "IHDR")
+      return false;
+    const width = bytes.readUInt32BE(16);
+    const height = bytes.readUInt32BE(20);
+    return width > 0 && height > 0 && bytes.includes(Buffer.from("IEND"));
+  }
+
+  if (mimeType === "image/jpeg") {
+    if (bytes.length < 12 || bytes.at(-2) !== 0xff || bytes.at(-1) !== 0xd9)
+      return false;
+    let offset = 2;
+    while (offset + 8 < bytes.length) {
+      if (bytes[offset] !== 0xff) {
+        offset += 1;
+        continue;
+      }
+      const marker = bytes[offset + 1];
+      if (marker === 0xd8 || marker === 0xd9) {
+        offset += 2;
+        continue;
+      }
+      if (marker === 0xda) break;
+      const length = bytes.readUInt16BE(offset + 2);
+      if (length < 2 || offset + 2 + length > bytes.length) return false;
+      if (
+        (marker >= 0xc0 && marker <= 0xc3) ||
+        (marker >= 0xc5 && marker <= 0xc7) ||
+        (marker >= 0xc9 && marker <= 0xcb) ||
+        (marker >= 0xcd && marker <= 0xcf)
+      ) {
+        const height = bytes.readUInt16BE(offset + 5);
+        const width = bytes.readUInt16BE(offset + 7);
+        return width > 0 && height > 0;
+      }
+      offset += 2 + length;
+    }
+    return false;
+  }
+
+  if (mimeType === "image/webp") {
+    if (bytes.length < 30 || bytes.toString("ascii", 8, 12) !== "WEBP")
+      return false;
+    const declaredSize = bytes.readUInt32LE(4) + 8;
+    const chunk = bytes.toString("ascii", 12, 16);
+    return declaredSize <= bytes.length && ["VP8 ", "VP8L", "VP8X"].includes(chunk);
+  }
+
+  return false;
+}
+
 export async function inspectSubmissionStream(
   stream: ReadableStream<Uint8Array>,
   maximumSizeInBytes = MAX_SUBMISSION_FILE_SIZE,
@@ -91,14 +142,9 @@ export async function inspectSubmissionStream(
       throw new Error("El PDF está dañado, vacío o protegido con contraseña.");
     }
   } else {
-    try {
-      const metadata = await sharp(bytes, { failOn: "error" }).metadata();
-      if (!metadata.width || !metadata.height)
-        throw new Error("Imagen sin dimensiones");
-      pageCount = 1;
-    } catch {
+    if (!validImageStructure(bytes, mimeType))
       throw new Error("La imagen está dañada o incompleta.");
-    }
+    pageCount = 1;
   }
   return { sha256: hash.digest("hex"), mimeType, size, pageCount };
 }
